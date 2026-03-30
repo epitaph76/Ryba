@@ -7,6 +7,7 @@ This package is the S-1 technical research surface for Ryba.
 - `Canvas`: React Flow with custom nodes and sample relations.
 - `Table`: TanStack Table with TanStack Virtual for long row sets.
 - `Editor`: Tiptap Starter Kit with a small entity-reference metadata concept.
+- `Core S-2`: Minimal integration with API auth/workspace/space/entity/relation flow.
 
 ## Run locally
 

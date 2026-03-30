@@ -1,18 +1,19 @@
 import type { JsonObject } from './json';
+import type { UserId } from './user';
+import type { SpaceId, WorkspaceId } from './workspace';
 
 export type EntityId = string;
 export type EntityTypeId = string;
-export type SpaceId = string;
-export type WorkspaceId = string;
 
 export interface EntityRecord {
   id: EntityId;
   workspaceId: WorkspaceId;
-  spaceId: SpaceId | null;
-  typeId: EntityTypeId | null;
+  spaceId: SpaceId;
   title: string;
   summary: string | null;
   properties: JsonObject;
+  createdByUserId: UserId;
+  updatedByUserId: UserId;
   createdAt: string;
   updatedAt: string;
 }

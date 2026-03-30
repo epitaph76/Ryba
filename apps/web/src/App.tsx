@@ -3,6 +3,11 @@ import type { PrototypeId } from './types';
 
 const tabs: Array<{ id: PrototypeId; label: string; description: string }> = [
   {
+    id: 'core',
+    label: 'Core S-2',
+    description: 'Auth + workspace + entities via API',
+  },
+  {
     id: 'canvas',
     label: 'Canvas',
     description: 'React Flow with custom nodes',
@@ -37,11 +42,19 @@ const EditorPrototype = lazy(() =>
   })),
 );
 
+const CoreDomainPrototype = lazy(() =>
+  import('./components/CoreDomainPrototype').then((module) => ({
+    default: module.CoreDomainPrototype,
+  })),
+);
+
 export function App() {
-  const [active, setActive] = useState<PrototypeId>('canvas');
+  const [active, setActive] = useState<PrototypeId>('core');
 
   const current = useMemo(() => {
     switch (active) {
+      case 'core':
+        return <CoreDomainPrototype />;
       case 'canvas':
         return <CanvasPrototype />;
       case 'table':

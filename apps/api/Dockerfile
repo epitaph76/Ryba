@@ -43,6 +43,7 @@ COPY packages/schemas/package.json packages/schemas/package.json
 RUN pnpm install --prod --no-frozen-lockfile
 
 COPY --from=build /app/apps/api/dist ./apps/api/dist
+COPY --from=build /app/apps/api/drizzle ./apps/api/drizzle
 COPY --from=build /app/packages/types/dist ./packages/types/dist
 COPY --from=build /app/packages/schemas/dist ./packages/schemas/dist
 

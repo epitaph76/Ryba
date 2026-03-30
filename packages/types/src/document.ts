@@ -1,4 +1,5 @@
 import type { EntityId } from './entity';
+import type { SpaceId, WorkspaceId } from './workspace';
 
 export interface DocumentEntityReference {
   entityId: EntityId;
@@ -15,8 +16,8 @@ export interface DocumentBlock {
 
 export interface DocumentRecord {
   id: string;
-  workspaceId: string;
-  spaceId: string | null;
+  workspaceId: WorkspaceId;
+  spaceId: SpaceId | null;
   title: string;
   body: DocumentBlock[];
   createdAt: string;

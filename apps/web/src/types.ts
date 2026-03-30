@@ -1,7 +1,7 @@
 import type { Edge, Node } from 'reactflow';
 import type { EntityId } from '@ryba/types';
 
-export type PrototypeId = 'canvas' | 'table' | 'editor';
+export type PrototypeId = 'canvas' | 'table' | 'editor' | 'core';
 
 export type EntityNodeData = {
   title: string;
