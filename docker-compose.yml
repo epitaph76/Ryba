@@ -53,13 +53,13 @@ services:
 
   web:
     build:
-      context: ./apps/web
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/web/Dockerfile
     container_name: ryba-web
     profiles:
       - frontend
     ports:
-      - "${WEB_PREVIEW_PORT:-4173}:4173"
+      - "${WEB_PREVIEW_PORT:-4173}:80"
     restart: unless-stopped
 
 volumes:

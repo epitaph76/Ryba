@@ -1,17 +1,29 @@
-FROM node:22-alpine
+FROM node:22-alpine AS base
 
-WORKDIR /app
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
 
 RUN corepack enable
 
-COPY package.json ./
+FROM base AS deps
+WORKDIR /app
 
-RUN corepack pnpm install
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json tsconfig.base.json ./
+COPY apps/web/package.json apps/web/package.json
+COPY packages/types/package.json packages/types/package.json
 
-COPY . .
+RUN pnpm install --frozen-lockfile
 
-RUN corepack pnpm typecheck && corepack pnpm build
+FROM deps AS build
+WORKDIR /app
 
-EXPOSE 4173
+COPY apps/web apps/web
+COPY packages/types packages/types
 
-CMD ["corepack", "pnpm", "preview"]
+RUN pnpm --filter @ryba/web typecheck && pnpm --filter @ryba/web build
+
+FROM nginx:1.27-alpine AS runtime
+
+COPY --from=build /app/apps/web/dist /usr/share/nginx/html
+
+EXPOSE 80

@@ -24,11 +24,11 @@ pnpm --dir apps/web build
 
 ## Docker
 
-Build from the repository root with `apps/web` as the Docker context:
+Build from the repository root (required, because `@ryba/types` is a workspace dependency):
 
 ```bash
-docker build -t ryba-web apps/web
-docker run --rm -p 4173:4173 ryba-web
+docker build -t ryba-web -f apps/web/Dockerfile .
+docker run --rm -p 4173:80 ryba-web
 ```
 
-The container serves the built preview on port `4173`.
+The container serves the built static app on container port `80`.
