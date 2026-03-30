@@ -1,0 +1,62 @@
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Dependency directories
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+out/
+.output/
+.turbo/
+coverage/
+.nyc_output/
+storybook-static/
+
+# Framework and tooling caches
+.vite/
+.cache/
+.eslintcache
+*.tsbuildinfo
+
+# Test artifacts
+playwright-report/
+test-results/
+blob-report/
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.*.local
+
+# Runtime data
+tmp/
+temp/
+*.tmp
+*.pid
+*.seed
+*.sqlite
+*.sqlite3
+*.db
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+
+# Misc
+*.tgz
+*.zip
