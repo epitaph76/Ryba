@@ -4,15 +4,24 @@
   "private": true,
   "description": "Ryba monorepo bootstrap for a visual knowledge, data and CRM workspace.",
   "license": "UNLICENSED",
+  "packageManager": "pnpm@10.33.0",
   "engines": {
     "node": ">=22 <23"
   },
   "scripts": {
-    "dev": "turbo run dev",
-    "build": "turbo run build",
-    "lint": "turbo run lint",
-    "test": "turbo run test",
-    "typecheck": "turbo run typecheck"
+    "dev": "corepack pnpm turbo run dev",
+    "dev:web": "corepack pnpm --filter @ryba/web dev",
+    "dev:api": "corepack pnpm --filter @ryba/api dev",
+    "dev:collab": "corepack pnpm --filter @ryba/collab dev",
+    "dev:db": "docker compose up -d postgres",
+    "build": "corepack pnpm turbo run build",
+    "lint": "corepack pnpm turbo run lint",
+    "test": "corepack pnpm turbo run test",
+    "typecheck": "corepack pnpm turbo run typecheck",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f --tail=200",
+    "docker:api": "docker compose up --build -d postgres api"
   },
   "devDependencies": {
     "turbo": "^2.0.0",

@@ -1,0 +1,25 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "outDir": "dist",
+    "types": ["node"],
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "esModuleInterop": true,
+    "declaration": true,
+    "declarationMap": true,
+    "skipLibCheck": true,
+    "paths": {
+      "@ryba/types": ["../../packages/types/src/index.ts"],
+      "@ryba/types/*": ["../../packages/types/src/*"],
+      "@ryba/schemas": ["../../packages/schemas/src/index.ts"],
+      "@ryba/schemas/*": ["../../packages/schemas/src/*"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

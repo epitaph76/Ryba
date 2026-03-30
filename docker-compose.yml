@@ -1,0 +1,66 @@
+name: ryba
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ryba-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ryba}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-ryba}"
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: ryba-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      API_PORT: ${API_PORT:-3001}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-ryba}
+    ports:
+      - "${API_PORT:-3001}:${API_PORT:-3001}"
+    restart: unless-stopped
+
+  collab:
+    build:
+      context: ./apps/collab
+      dockerfile: Dockerfile
+    container_name: ryba-collab
+    environment:
+      PORT: ${COLLAB_PORT:-1234}
+      COLLAB_INSTANCE_NAME: ryba-collab-prototype
+      PUBLIC_URL: http://localhost:${COLLAB_PORT:-1234}
+    ports:
+      - "${COLLAB_PORT:-1234}:${COLLAB_PORT:-1234}"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    container_name: ryba-web
+    profiles:
+      - frontend
+    ports:
+      - "${WEB_PREVIEW_PORT:-4173}:4173"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

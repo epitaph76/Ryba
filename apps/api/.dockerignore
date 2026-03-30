@@ -1,0 +1,9 @@
+node_modules
+dist
+coverage
+.turbo
+.git
+.gitignore
+npm-debug.log
+pnpm-debug.log
+*.local

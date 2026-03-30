@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": false,
+    "declarationMap": false,
+    "paths": {
+      "@ryba/types": ["../../packages/types/dist/index.d.ts"],
+      "@ryba/types/*": ["../../packages/types/dist/*"],
+      "@ryba/schemas": ["../../packages/schemas/dist/index.d.ts"],
+      "@ryba/schemas/*": ["../../packages/schemas/dist/*"]
+    }
+  }
+}
