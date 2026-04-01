@@ -1,4 +1,14 @@
-import { index, jsonb, pgTable, text, timestamp, unique, uniqueIndex } from 'drizzle-orm/pg-core';
+import {
+  boolean,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  unique,
+  uniqueIndex,
+} from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
 export const users = pgTable(
@@ -120,6 +130,70 @@ export const spaceCanvasStates = pgTable(
   },
 );
 
+export const entityTypes = pgTable(
+  'entity_types',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    slug: text('slug').notNull(),
+    description: text('description'),
+    color: text('color'),
+    icon: text('icon'),
+    isSystem: boolean('is_system').notNull().default(false),
+    createdAt: timestamp('created_at', { mode: 'string', withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { mode: 'string', withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    workspaceSlugUnique: unique('entity_types_workspace_slug_unique').on(table.workspaceId, table.slug),
+    workspaceIdx: index('entity_types_workspace_idx').on(table.workspaceId),
+  }),
+);
+
+export const entityTypeFields = pgTable(
+  'entity_type_fields',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    entityTypeId: text('entity_type_id')
+      .notNull()
+      .references(() => entityTypes.id, { onDelete: 'cascade' }),
+    key: text('key').notNull(),
+    label: text('label').notNull(),
+    fieldType: text('field_type').notNull(),
+    description: text('description'),
+    required: boolean('required').notNull().default(false),
+    order: integer('order').notNull().default(0),
+    config: jsonb('config').notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { mode: 'string', withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { mode: 'string', withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    entityTypeKeyUnique: unique('entity_type_fields_entity_type_key_unique').on(
+      table.entityTypeId,
+      table.key,
+    ),
+    entityTypeOrderUnique: unique('entity_type_fields_entity_type_order_unique').on(
+      table.entityTypeId,
+      table.order,
+    ),
+    workspaceIdx: index('entity_type_fields_workspace_idx').on(table.workspaceId),
+    entityTypeIdx: index('entity_type_fields_entity_type_idx').on(table.entityTypeId),
+  }),
+);
+
 export const entities = pgTable(
   'entities',
   {
@@ -130,6 +204,7 @@ export const entities = pgTable(
     spaceId: text('space_id')
       .notNull()
       .references(() => spaces.id, { onDelete: 'cascade' }),
+    entityTypeId: text('entity_type_id').references(() => entityTypes.id, { onDelete: 'set null' }),
     title: text('title').notNull(),
     summary: text('summary'),
     properties: jsonb('properties').notNull().default(sql`'{}'::jsonb`),
@@ -149,6 +224,7 @@ export const entities = pgTable(
   (table) => ({
     workspaceIdx: index('entities_workspace_idx').on(table.workspaceId),
     spaceIdx: index('entities_space_idx').on(table.spaceId),
+    entityTypeIdx: index('entities_entity_type_idx').on(table.entityTypeId),
   }),
 );
 

@@ -54,7 +54,7 @@
 | S-1 | Техническая разведка | `done` | Подняты минимальные web/api/collab-прототипы, подтверждён стек и зафиксированы технические выводы |
 | S-2 | Core domain и backend-скелет | `done` | Реализованы core domain API, JWT auth, PostgreSQL schema, миграции и e2e-проверки |
 | S-3 | Базовая канва | `done` | Реализована рабочая canvas-линза поверх реальных entities и relations с persistence layout и автотестами |
-| S-4 | Entity detail и schema layer | `planned` | Должны появиться типы сущностей и детальная запись |
+| S-4 | Entity detail и schema layer | `done` | Введены entity types, field definitions, валидация значений и завершённый detail/schema слой с backend, web и тестовой интеграцией |
 | S-5 | Documents и narrative layer | `planned` | Должен появиться документный слой с entity references |
 | S-6 | Tables и saved views | `planned` | Должны появиться структурированные рабочие представления |
 | S-7 | Groups как subspaces | `planned` | Должна появиться ключевая фича подпространств |
@@ -66,7 +66,7 @@
 
 ## Текущее состояние на сейчас
 
-На текущий момент завершены четыре шага: стартовый инфраструктурный bootstrap (S-0), техническая разведка (S-1), core domain + backend skeleton (S-2) и базовая канва поверх реальных данных (S-3).
+На текущий момент завершены пять шагов: стартовый инфраструктурный bootstrap (S-0), техническая разведка (S-1), core domain + backend skeleton (S-2), базовая канва поверх реальных данных (S-3) и entity detail + schema layer (S-4).
 
 ### Что уже сделано
 
@@ -96,14 +96,18 @@
 - в PostgreSQL добавлено отдельное space-level хранилище `space_canvas_states` для canvas layout, не смешанное с core source of truth;
 - в `apps/api` добавлены `GET /spaces/:spaceId/canvas` и `PUT /spaces/:spaceId/canvas` с валидацией layout относительно реальных `entities` и `relations`;
 - в `apps/web` прототипный harness заменён на рабочий S-3 экран канвы поверх реального API с drag/drop, zoom/pan, selection, созданием entity из canvas и созданием relation через connect;
-- из node открывается минимальный detail/inspector panel без захода в S-4 schema layer;
+- из node открывается detail view выбранной entity с типом и typed fields;
 - layout канвы можно читать и сохранять отдельно от доменных данных;
 - добавлены S-3 автотесты для API и unit-тесты для web canvas model;
 - добавлен `docs/S3_BASE_CANVAS_IMPLEMENTATION.md` с фиксацией реализации этапа.
+- введены `entity_types` и `entity_type_fields`, а в `entities` добавлен `entityTypeId`;
+- в `apps/api` добавлены seed-наборы типовых сущностей для нового workspace, CRUD для entity types и runtime-валидация значений полей по schema;
+- в `apps/web` подготовлены pure model/helpers для detail view и schema editor, а также API-клиент для entity type / entity update сценариев;
+- добавлены S-4 integration и model-level автотесты для backend и web;
 
 ### Что это означает
 
-Это означает, что репозиторий уже содержит не только core-доменную базу, но и первую рабочую визуальную линзу поверх неё: канва больше не является демкой и использует реальные `spaces`, `entities`, `relations` и отдельный persistence layer для layout.
+Это означает, что репозиторий уже содержит не только core-доменную базу, но и несколько рабочих слоёв поверх неё: канва больше не является демкой, а над предметной моделью уже оформлен типизированный S-4 слой.
 
 ### Что это ещё не означает
 
@@ -116,11 +120,11 @@
 - групп как subspaces;
 - permission model;
 - production-grade collaboration layer;
-- типизированного entity detail/schema layer уровня S-4;
+- полностью завершённого и интегрированного entity detail/schema layer уровня S-4;
 - документов, таблиц, groups/subspaces и permission model как рабочих продуктовых слоёв.
 
 То есть продукт как система ещё не построен.
-Построены стартовый каркас, технические прототипы, рабочее S-2 доменное ядро и базовая S-3 канва.
+Построены стартовый каркас, технические прототипы, рабочее S-2 доменное ядро, базовая S-3 канва и завершённый S-4 слой типов сущностей и полей.
 
 ---
 
@@ -468,7 +472,7 @@
 
 ## S-4. Entity Detail и Schema Layer
 
-**Статус:** `planned`
+**Статус:** `done`
 
 ### Цель
 
@@ -488,6 +492,14 @@
 - строим detail/record view;
 - реализуем редактирование полей;
 - связываем типы сущностей с отображением и валидацией.
+
+### Что уже реализовано
+
+- в PostgreSQL добавлены `entity_types` и `entity_type_fields`, а в `entities` появился `entityTypeId`;
+- workspace creation теперь seed-ит базовые типы `Company`, `Contact`, `Task`, `Note`, `Project`;
+- `apps/api` умеет создавать, обновлять и читать entity types, а также валидировать значения entity по schema;
+- `apps/web` получил helper-модели для detail draft, schema draft и field rendering, а также новые API-запросы для entity type и entity update сценариев;
+- добавлены интеграционные тесты S-4 для backend и unit-тесты для model-слоя web.
 
 ### Первые типы полей
 
@@ -528,6 +540,12 @@
 - API для типов и полей;
 - валидация значений;
 - базовый рендеринг разных field types.
+
+### Что ещё нужно добить
+
+- встроить detail/schema helpers в основной web-screen;
+- довести UX редактирования полей до законченного сценария;
+- при необходимости добавить отдельный detail endpoint, если он реально потребуется для следующих этапов.
 
 ### Как понять, что этап завершён
 
@@ -1206,11 +1224,11 @@ CRM появился как прикладной сценарий, не разр
 
 Ближайший правильный ход:
 
-1. перейти к S-4 и добавить entity detail + schema layer поверх уже рабочей S-3 канвы;
-2. превратить inspector в полноценную detail view записи, а не только в минимальный side panel;
-3. ввести первые entity types и field types без ухода в переусложнённую метасхему;
-4. сохранить границу между visual state канвы и domain state предметной модели;
-5. оставить Docker-first workflow и расширить smoke/integration coverage для нового S-4 слоя.
+1. перейти к S-5 documents и narrative layer;
+2. превратить inspector в полноценную detail view записи, а не только в вспомогательные helper-модели;
+3. сохранить границу между visual state канвы и domain state предметной модели;
+4. закрепить полученный S-4 слой в документации и тестах;
+5. оставить Docker-first workflow и расширить smoke/integration coverage для нового слоя.
 
 ## Главный контрольный вопрос проекта
 

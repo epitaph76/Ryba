@@ -6,6 +6,12 @@ const slugSchema = z
   .min(2)
   .max(64)
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+const fieldKeySchema = z
+  .string()
+  .trim()
+  .min(2)
+  .max(64)
+  .regex(/^[a-z][a-z0-9_]*$/);
 const displayNameSchema = z.string().trim().min(1).max(120);
 
 export const jsonObjectSchema = z.record(z.unknown());
@@ -82,10 +88,60 @@ export const spaceRecordSchema = z.object({
   updatedAt: z.string().min(1),
 });
 
+export const entityFieldTypeSchema = z.enum([
+  'text',
+  'rich_text',
+  'number',
+  'boolean',
+  'date',
+  'select',
+  'multi_select',
+  'relation',
+  'user',
+  'url',
+  'status',
+]);
+
+export const entityFieldOptionSchema = z.object({
+  value: z.string().trim().min(1).max(80),
+  label: z.string().trim().min(1).max(120),
+  color: z.string().trim().min(1).max(32).nullable(),
+});
+
+export const entityTypeFieldRecordSchema = z.object({
+  id: idSchema,
+  workspaceId: idSchema,
+  entityTypeId: idSchema,
+  key: fieldKeySchema,
+  label: z.string().trim().min(1).max(120),
+  fieldType: entityFieldTypeSchema,
+  description: z.string().max(4000).nullable(),
+  required: z.boolean(),
+  order: z.number().int().nonnegative(),
+  config: jsonObjectSchema.default({}),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+});
+
+export const entityTypeRecordSchema = z.object({
+  id: idSchema,
+  workspaceId: idSchema,
+  name: z.string().trim().min(1).max(120),
+  slug: slugSchema,
+  description: z.string().max(4000).nullable(),
+  color: z.string().trim().min(1).max(32).nullable(),
+  icon: z.string().trim().min(1).max(64).nullable(),
+  isSystem: z.boolean(),
+  fields: z.array(entityTypeFieldRecordSchema),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+});
+
 export const entityRecordSchema = z.object({
   id: idSchema,
   workspaceId: idSchema,
   spaceId: idSchema,
+  entityTypeId: idSchema.nullable(),
   title: z.string().trim().min(1).max(200),
   summary: z.string().max(4000).nullable(),
   properties: jsonObjectSchema.default({}),
@@ -138,6 +194,7 @@ export const createSpaceRequestSchema = z.object({
 });
 
 export const createEntityRequestSchema = z.object({
+  entityTypeId: idSchema.optional(),
   title: z.string().trim().min(1).max(200),
   summary: z.string().max(4000).nullable().optional(),
   properties: jsonObjectSchema.optional(),
@@ -145,13 +202,21 @@ export const createEntityRequestSchema = z.object({
 
 export const updateEntityRequestSchema = z
   .object({
+    entityTypeId: idSchema.nullable().optional(),
     title: z.string().trim().min(1).max(200).optional(),
     summary: z.string().max(4000).nullable().optional(),
     properties: jsonObjectSchema.optional(),
   })
-  .refine((value) => value.title !== undefined || value.summary !== undefined || value.properties !== undefined, {
-    message: 'At least one field must be provided',
-  });
+  .refine(
+    (value) =>
+      value.entityTypeId !== undefined ||
+      value.title !== undefined ||
+      value.summary !== undefined ||
+      value.properties !== undefined,
+    {
+      message: 'At least one field must be provided',
+    },
+  );
 
 export const createRelationRequestSchema = z.object({
   fromEntityId: idSchema,
@@ -185,6 +250,10 @@ export const relationIdParamsSchema = z.object({
   relationId: idSchema,
 });
 
+export const entityTypeIdParamsSchema = z.object({
+  entityTypeId: idSchema,
+});
+
 export const listWorkspacesResponseSchema = z.object({
   items: z.array(workspaceRecordSchema),
 });
@@ -197,8 +266,60 @@ export const listEntitiesResponseSchema = z.object({
   items: z.array(entityRecordSchema),
 });
 
+export const listEntityTypesResponseSchema = z.object({
+  items: z.array(entityTypeRecordSchema),
+});
+
 export const listRelationsResponseSchema = z.object({
   items: z.array(relationRecordSchema),
+});
+
+export const entityTypeFieldInputSchema = z.object({
+  id: idSchema.optional(),
+  key: fieldKeySchema,
+  label: z.string().trim().min(1).max(120),
+  fieldType: entityFieldTypeSchema,
+  description: z.string().max(4000).nullable().optional(),
+  required: z.boolean().optional(),
+  order: z.number().int().nonnegative().optional(),
+  config: jsonObjectSchema.optional(),
+});
+
+export const createEntityTypeRequestSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  slug: slugSchema,
+  description: z.string().max(4000).nullable().optional(),
+  color: z.string().trim().min(1).max(32).nullable().optional(),
+  icon: z.string().trim().min(1).max(64).nullable().optional(),
+  fields: z.array(entityTypeFieldInputSchema).default([]),
+});
+
+export const updateEntityTypeRequestSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120).optional(),
+    slug: slugSchema.optional(),
+    description: z.string().max(4000).nullable().optional(),
+    color: z.string().trim().min(1).max(32).nullable().optional(),
+    icon: z.string().trim().min(1).max(64).nullable().optional(),
+    fields: z.array(entityTypeFieldInputSchema).optional(),
+  })
+  .refine(
+    (value) =>
+      value.name !== undefined ||
+      value.slug !== undefined ||
+      value.description !== undefined ||
+      value.color !== undefined ||
+      value.icon !== undefined ||
+      value.fields !== undefined,
+    {
+      message: 'At least one field must be provided',
+    },
+  );
+
+export const entityDetailRecordSchema = z.object({
+  entity: entityRecordSchema,
+  entityType: entityTypeRecordSchema.nullable(),
+  availableEntityTypes: z.array(entityTypeRecordSchema),
 });
 
 export const canvasPointSchema = z.object({

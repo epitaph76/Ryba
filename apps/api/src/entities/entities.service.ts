@@ -15,6 +15,7 @@ import { ApiException } from '../common/api-exception';
 import { DatabaseService } from '../database.service';
 import { toEntityRecord } from '../db/mappers';
 import { entities, spaces } from '../db/schema';
+import { EntityTypesService } from '../entity-types/entity-types.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 
 type SpaceIdParams = z.infer<typeof spaceIdParamsSchema>;
@@ -27,6 +28,8 @@ export class EntitiesService {
   constructor(
     @Inject(DatabaseService)
     private readonly databaseService: DatabaseService,
+    @Inject(EntityTypesService)
+    private readonly entityTypesService: EntityTypesService,
     @Inject(WorkspacesService)
     private readonly workspacesService: WorkspacesService,
   ) {}
@@ -38,6 +41,14 @@ export class EntitiesService {
   ): Promise<EntityRecord> {
     const db = this.getDb();
     const space = await this.requireSpaceAccess(userId, params.spaceId);
+    const entityType = await this.entityTypesService.resolveEntityTypeForWorkspace(
+      space.workspaceId,
+      payload.entityTypeId,
+    );
+    const properties = this.entityTypesService.validateEntityPropertiesForType(
+      entityType,
+      payload.properties ?? {},
+    );
 
     const [insertedEntity] = await db
       .insert(entities)
@@ -45,9 +56,10 @@ export class EntitiesService {
         id: randomUUID(),
         workspaceId: space.workspaceId,
         spaceId: space.id,
+        entityTypeId: entityType?.id ?? null,
         title: payload.title.trim(),
         summary: payload.summary ?? null,
-        properties: payload.properties ?? {},
+        properties,
         createdByUserId: userId,
         updatedByUserId: userId,
       })
@@ -85,13 +97,25 @@ export class EntitiesService {
   ): Promise<EntityRecord> {
     const db = this.getDb();
     const entity = await this.requireEntityAccess(userId, params.entityId);
+    const nextEntityType = await this.entityTypesService.resolveEntityTypeForWorkspace(
+      entity.workspaceId,
+      payload.entityTypeId === undefined ? entity.entityTypeId : payload.entityTypeId,
+    );
+    const nextProperties =
+      payload.properties !== undefined || payload.entityTypeId !== undefined
+        ? this.entityTypesService.validateEntityPropertiesForType(
+            nextEntityType,
+            payload.properties ?? entity.properties,
+          )
+        : undefined;
 
     const [updatedEntity] = await db
       .update(entities)
       .set({
+        ...(payload.entityTypeId !== undefined ? { entityTypeId: nextEntityType?.id ?? null } : {}),
         ...(payload.title !== undefined ? { title: payload.title.trim() } : {}),
         ...(payload.summary !== undefined ? { summary: payload.summary } : {}),
-        ...(payload.properties !== undefined ? { properties: payload.properties } : {}),
+        ...(nextProperties !== undefined ? { properties: nextProperties } : {}),
         updatedByUserId: userId,
         updatedAt: new Date().toISOString(),
       })

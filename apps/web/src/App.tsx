@@ -21,6 +21,8 @@ import type {
   CanvasEdgeLayout,
   CanvasStateRecord,
   EntityRecord,
+  EntityTypeFieldRecord,
+  EntityTypeRecord,
   RelationRecord,
   SpaceRecord,
   UserRecord,
@@ -35,6 +37,19 @@ import {
   type CanvasEntityNodeData,
   type CanvasRelationEdge,
 } from './canvas-model';
+import {
+  buildDraftPropertiesForType,
+  buildEntityDetailDraft,
+  buildEntityTypeDraft,
+  buildEntityUpdatePayload,
+  createEmptyEntityTypeDraft,
+  createEmptyFieldDraft,
+  getEntityTypeById,
+  serializeEntityTypeDraft,
+  type EntityDetailDraft,
+  type EntityTypeDraft,
+} from './entity-detail-model';
+import { getFieldOptions, type FieldEditorValue } from './field-renderers';
 
 const TOKEN_STORAGE_KEY = 'ryba_s3_access_token';
 
@@ -47,6 +62,7 @@ function EntityCardNode({ data, selected }: NodeProps<CanvasEntityNodeData>) {
       </div>
       <strong>{data.title}</strong>
       <span className="canvas-node__id">{data.entityId}</span>
+      {data.entityTypeName ? <span className="canvas-node__type">{data.entityTypeName}</span> : null}
       <p>{data.summary ?? 'Описание пока пустое. Открой инспектор, чтобы дополнить запись.'}</p>
       <Handle type="target" position={Position.Left} className="canvas-node__handle" />
       <Handle type="source" position={Position.Right} className="canvas-node__handle" />
@@ -63,6 +79,24 @@ const defaultViewport = {
   offset: { x: 0, y: 0 },
 };
 
+const toCommaSeparated = (value: FieldEditorValue) => {
+  if (Array.isArray(value)) {
+    return value.join(', ');
+  }
+
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  return '';
+};
+
+const fromCommaSeparated = (value: string) =>
+  value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
 export function App() {
   const flowWrapperRef = useRef<HTMLDivElement | null>(null);
   const [flowInstance, setFlowInstance] = useState<
@@ -74,6 +108,7 @@ export function App() {
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
   const [spaces, setSpaces] = useState<SpaceRecord[]>([]);
   const [entities, setEntities] = useState<EntityRecord[]>([]);
+  const [entityTypes, setEntityTypes] = useState<EntityTypeRecord[]>([]);
   const [relations, setRelations] = useState<RelationRecord[]>([]);
   const [nodes, setNodes] = useState<CanvasEntityNode[]>([]);
   const [edges, setEdges] = useState<CanvasRelationEdge[]>([]);
@@ -88,6 +123,11 @@ export function App() {
   const [canvasError, setCanvasError] = useState<string | null>(null);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [logLines, setLogLines] = useState<string[]>([]);
+  const [entitySaveBusy, setEntitySaveBusy] = useState(false);
+  const [schemaSaveBusy, setSchemaSaveBusy] = useState(false);
+  const [entityDetailDraft, setEntityDetailDraft] = useState<EntityDetailDraft | null>(null);
+  const [activeSchemaTypeId, setActiveSchemaTypeId] = useState('');
+  const [entityTypeDraft, setEntityTypeDraft] = useState<EntityTypeDraft>(createEmptyEntityTypeDraft());
 
   const [email, setEmail] = useState('demo@ryba.local');
   const [password, setPassword] = useState('Password123');
@@ -103,6 +143,8 @@ export function App() {
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null;
   const selectedSpace = spaces.find((space) => space.id === selectedSpaceId) ?? null;
   const selectedEntity = entities.find((entity) => entity.id === selectedEntityId) ?? null;
+  const selectedEntityType = getEntityTypeById(entityTypes, entityDetailDraft?.entityTypeId);
+  const activeSchemaType = getEntityTypeById(entityTypes, activeSchemaTypeId || null);
 
   const relatedToSelectedEntity = useMemo(() => {
     if (!selectedEntity) {
@@ -135,6 +177,7 @@ export function App() {
     setWorkspaces([]);
     setSpaces([]);
     setEntities([]);
+    setEntityTypes([]);
     setRelations([]);
     setNodes([]);
     setEdges([]);
@@ -143,6 +186,9 @@ export function App() {
     setSelectedWorkspaceId('');
     setSelectedSpaceId('');
     setSelectedEntityId(null);
+    setActiveSchemaTypeId('');
+    setEntityTypeDraft(createEmptyEntityTypeDraft());
+    setEntityDetailDraft(null);
     setCanvasError(null);
     setLayoutDirty(false);
     appendLog('Сессия очищена');
@@ -166,9 +212,11 @@ export function App() {
     nextRelations: RelationRecord[],
     nextCanvas: CanvasStateRecord,
     focusEntityId: string | null,
+    nextEntityTypes: EntityTypeRecord[] = entityTypes,
   ) => {
     const graph = buildCanvasGraph({
       entities: nextEntities,
+      entityTypes: nextEntityTypes,
       relations: nextRelations,
       canvas: nextCanvas,
       selectedEntityId: focusEntityId,
@@ -193,6 +241,18 @@ export function App() {
     if (!selectedWorkspaceId && response.items[0]) {
       setSelectedWorkspaceId(response.items[0].id);
     }
+  };
+
+  const loadEntityTypes = async (activeToken: string, workspaceId: string) => {
+    const response = await canvasApi.listEntityTypes(activeToken, workspaceId);
+    setEntityTypes(response.items);
+    setActiveSchemaTypeId((current) => {
+      if (current && response.items.some((entityType) => entityType.id === current)) {
+        return current;
+      }
+
+      return response.items[0]?.id ?? '';
+    });
   };
 
   const loadSpaces = async (activeToken: string, workspaceId: string) => {
@@ -287,6 +347,7 @@ export function App() {
           entityId: created.id,
           title: created.title,
           summary: created.summary,
+          entityTypeName: null,
           relationCount: 0,
         },
         selected: true,
@@ -326,7 +387,10 @@ export function App() {
     }
 
     void withAction('Загрузка пространств', async () => {
-      await loadSpaces(token, selectedWorkspaceId);
+      await Promise.all([
+        loadSpaces(token, selectedWorkspaceId),
+        loadEntityTypes(token, selectedWorkspaceId),
+      ]);
     });
   }, [selectedWorkspaceId, token]);
 
@@ -351,6 +415,37 @@ export function App() {
 
     void flowInstance.setViewport(nextViewport, { duration: 0 });
   }, [canvasState, flowInstance]);
+
+  useEffect(() => {
+    setEntityDetailDraft(buildEntityDetailDraft(selectedEntity, entityTypes));
+  }, [entityTypes, selectedEntity]);
+
+  useEffect(() => {
+    setEntityTypeDraft(buildEntityTypeDraft(activeSchemaType));
+  }, [activeSchemaType]);
+
+  useEffect(() => {
+    setNodes((current) =>
+      current.map((node) => {
+        const entity = entities.find((item) => item.id === node.id);
+        const nextTypeName = entity?.entityTypeId
+          ? entityTypes.find((item) => item.id === entity.entityTypeId)?.name ?? 'Typed record'
+          : null;
+
+        if (node.data.entityTypeName === nextTypeName) {
+          return node;
+        }
+
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            entityTypeName: nextTypeName,
+          },
+        };
+      }),
+    );
+  }, [entities, entityTypes]);
 
   const authenticateRegister = () =>
     withAction('Регистрация', async () => {
@@ -468,11 +563,232 @@ export function App() {
     setEdges((current) => applyEdgeChanges(changes, current));
   };
 
+  const updateDetailDraft = (patch: Partial<EntityDetailDraft>) => {
+    setEntityDetailDraft((current) => (current ? { ...current, ...patch } : current));
+  };
+
+  const setDetailFieldValue = (fieldKey: string, value: FieldEditorValue) => {
+    setEntityDetailDraft((current) => {
+      if (!current) {
+        return current;
+      }
+
+      return {
+        ...current,
+        properties: {
+          ...current.properties,
+          [fieldKey]: value,
+        },
+      };
+    });
+  };
+
+  const handleDetailEntityTypeChange = (nextEntityTypeId: string) => {
+    setEntityDetailDraft((current) => {
+      if (!current) {
+        return current;
+      }
+
+      const nextType = getEntityTypeById(entityTypes, nextEntityTypeId || null);
+      const baseProperties = selectedEntity?.properties ?? {};
+
+      return {
+        ...current,
+        entityTypeId: nextEntityTypeId || null,
+        properties: buildDraftPropertiesForType(nextType, baseProperties),
+      };
+    });
+  };
+
+  const saveEntityDetail = () =>
+    withAction('Сохранение записи', async () => {
+      if (!token || !selectedSpaceId || !selectedEntity || !entityDetailDraft) {
+        return;
+      }
+
+      setEntitySaveBusy(true);
+
+      try {
+        const payload = buildEntityUpdatePayload(entityDetailDraft, entityTypes);
+        const updated = await canvasApi.updateEntity(token, selectedEntity.id, payload);
+        appendLog(`Запись обновлена: ${updated.title}`);
+        await loadCanvas(token, selectedSpaceId, updated.id);
+      } finally {
+        setEntitySaveBusy(false);
+      }
+    });
+
+  const startNewEntityType = () => {
+    setActiveSchemaTypeId('');
+    setEntityTypeDraft(createEmptyEntityTypeDraft());
+  };
+
+  const updateEntityTypeDraft = (patch: Partial<EntityTypeDraft>) => {
+    setEntityTypeDraft((current) => ({
+      ...current,
+      ...patch,
+    }));
+  };
+
+  const updateSchemaField = (
+    fieldIndex: number,
+    patch: Partial<EntityTypeDraft['fields'][number]>,
+  ) => {
+    setEntityTypeDraft((current) => ({
+      ...current,
+      fields: current.fields.map((field, index) =>
+        index === fieldIndex
+          ? {
+              ...field,
+              ...patch,
+            }
+          : field,
+      ),
+    }));
+  };
+
+  const addSchemaField = () => {
+    setEntityTypeDraft((current) => ({
+      ...current,
+      fields: [...current.fields, createEmptyFieldDraft()],
+    }));
+  };
+
+  const removeSchemaField = (fieldIndex: number) => {
+    setEntityTypeDraft((current) => ({
+      ...current,
+      fields: current.fields.filter((_, index) => index !== fieldIndex),
+    }));
+  };
+
+  const saveSchemaLayer = () =>
+    withAction('Сохранение схемы', async () => {
+      if (!token || !selectedWorkspaceId) {
+        return;
+      }
+
+      const payload = serializeEntityTypeDraft(entityTypeDraft);
+
+      if (!payload.name || !payload.slug) {
+        throw new Error('Type name and slug are required');
+      }
+
+      setSchemaSaveBusy(true);
+
+      try {
+        let persistedTypeId = activeSchemaTypeId;
+
+        if (activeSchemaTypeId) {
+          const updated = await canvasApi.updateEntityType(token, activeSchemaTypeId, payload);
+          persistedTypeId = updated.id;
+          appendLog(`Тип обновлён: ${updated.slug}`);
+        } else {
+          const created = await canvasApi.createEntityType(token, selectedWorkspaceId, payload);
+          persistedTypeId = created.id;
+          appendLog(`Тип создан: ${created.slug}`);
+        }
+
+        const nextTypes = await canvasApi.listEntityTypes(token, selectedWorkspaceId);
+        setEntityTypes(nextTypes.items);
+        setActiveSchemaTypeId(persistedTypeId);
+      } finally {
+        setSchemaSaveBusy(false);
+      }
+    });
+
+  const renderFieldEditor = (field: EntityTypeFieldRecord) => {
+    if (!entityDetailDraft) {
+      return null;
+    }
+
+    const rawValue = entityDetailDraft.properties[field.key] ?? '';
+    const options = getFieldOptions(field);
+    const allowsMany = field.fieldType === 'multi_select' || field.config.allowMultiple === true;
+
+    if (field.fieldType === 'boolean') {
+      return (
+        <label className="checkbox-field">
+          <input
+            type="checkbox"
+            checked={rawValue === true}
+            onChange={(event) => setDetailFieldValue(field.key, event.target.checked)}
+          />
+          <span>{field.label}</span>
+        </label>
+      );
+    }
+
+    if (field.fieldType === 'select' || field.fieldType === 'status') {
+      return (
+        <label className="field">
+          <span>{field.label}</span>
+          <select
+            value={typeof rawValue === 'string' ? rawValue : ''}
+            onChange={(event) => setDetailFieldValue(field.key, event.target.value)}
+          >
+            <option value="">Not set</option>
+            {options.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      );
+    }
+
+    if (field.fieldType === 'multi_select' || ((field.fieldType === 'relation' || field.fieldType === 'user') && allowsMany)) {
+      return (
+        <label className="field">
+          <span>{field.label}</span>
+          <input
+            type="text"
+            value={toCommaSeparated(rawValue)}
+            placeholder="comma, separated, values"
+            onChange={(event) => setDetailFieldValue(field.key, fromCommaSeparated(event.target.value))}
+          />
+        </label>
+      );
+    }
+
+    if (field.fieldType === 'rich_text') {
+      return (
+        <label className="field">
+          <span>{field.label}</span>
+          <textarea
+            rows={4}
+            value={typeof rawValue === 'string' ? rawValue : ''}
+            onChange={(event) => setDetailFieldValue(field.key, event.target.value)}
+          />
+        </label>
+      );
+    }
+
+    return (
+      <label className="field">
+        <span>{field.label}</span>
+        <input
+          type={
+            field.fieldType === 'number'
+              ? 'number'
+              : field.fieldType === 'date'
+                ? 'date'
+                : field.fieldType === 'url'
+                  ? 'url'
+                  : 'text'
+          }
+          value={typeof rawValue === 'string' ? rawValue : ''}
+          onChange={(event) => setDetailFieldValue(field.key, event.target.value)}
+        />
+      </label>
+    );
+  };
+
   return (
     <main className="s3-app">
       <header className="s3-hero">
         <div className="s3-hero__copy">
-          <span className="eyebrow">Ryba S-3 базовая канва</span>
+          <span className="eyebrow">Ryba S-4 detail and schema layer</span>
           <h1>Живая канва поверх ядра данных</h1>
           <p>
             Это первый рабочий визуальный слой поверх реальных сущностей и связей.
@@ -539,6 +855,198 @@ export function App() {
             </div>
             <button type="button" className="button button--ghost button--full" disabled={!token} onClick={clearSession}>
               Очистить сессию
+            </button>
+          </section>
+
+          <section className="panel">
+            <div className="panel__header">
+              <h2>Schema layer</h2>
+              <span>{activeSchemaType ? activeSchemaType.slug : 'new type'}</span>
+            </div>
+            <label className="field">
+              <span>Active type</span>
+              <select
+                value={activeSchemaTypeId}
+                onChange={(event) => setActiveSchemaTypeId(event.target.value)}
+                disabled={!token || !selectedWorkspaceId || !!busyLabel || schemaSaveBusy}
+              >
+                <option value="">New entity type</option>
+                {entityTypes.map((entityType) => (
+                  <option key={entityType.id} value={entityType.id}>
+                    {entityType.name} ({entityType.slug})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="actions">
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={startNewEntityType}
+                disabled={!token || !selectedWorkspaceId || !!busyLabel || schemaSaveBusy}
+              >
+                New type
+              </button>
+              <button
+                type="button"
+                className="button"
+                onClick={saveSchemaLayer}
+                disabled={!token || !selectedWorkspaceId || !!busyLabel || schemaSaveBusy}
+              >
+                {schemaSaveBusy ? 'Saving...' : 'Save type'}
+              </button>
+            </div>
+            <label className="field">
+              <span>Type name</span>
+              <input
+                type="text"
+                value={entityTypeDraft.name}
+                onChange={(event) => updateEntityTypeDraft({ name: event.target.value })}
+              />
+            </label>
+            <label className="field">
+              <span>Slug</span>
+              <input
+                type="text"
+                value={entityTypeDraft.slug}
+                onChange={(event) => updateEntityTypeDraft({ slug: event.target.value })}
+              />
+            </label>
+            <label className="field">
+              <span>Description</span>
+              <textarea
+                rows={2}
+                value={entityTypeDraft.description}
+                onChange={(event) => updateEntityTypeDraft({ description: event.target.value })}
+              />
+            </label>
+            <label className="field">
+              <span>Color token</span>
+              <input
+                type="text"
+                value={entityTypeDraft.color}
+                onChange={(event) => updateEntityTypeDraft({ color: event.target.value })}
+              />
+            </label>
+            <label className="field">
+              <span>Icon</span>
+              <input
+                type="text"
+                value={entityTypeDraft.icon}
+                onChange={(event) => updateEntityTypeDraft({ icon: event.target.value })}
+              />
+            </label>
+            <div className="schema-fields">
+              {entityTypeDraft.fields.map((field, index) => (
+                <div className="schema-field-row" key={`${field.key}-${index}`}>
+                  <label className="field">
+                    <span>Label</span>
+                    <input
+                      type="text"
+                      value={field.label}
+                      onChange={(event) => updateSchemaField(index, { label: event.target.value })}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Key</span>
+                    <input
+                      type="text"
+                      value={field.key}
+                      onChange={(event) => updateSchemaField(index, { key: event.target.value })}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Type</span>
+                    <select
+                      value={field.fieldType}
+                      onChange={(event) =>
+                        updateSchemaField(index, {
+                          fieldType: event.target.value as EntityTypeFieldRecord['fieldType'],
+                        })
+                      }
+                    >
+                      <option value="text">text</option>
+                      <option value="rich_text">rich_text</option>
+                      <option value="number">number</option>
+                      <option value="boolean">boolean</option>
+                      <option value="date">date</option>
+                      <option value="select">select</option>
+                      <option value="multi_select">multi_select</option>
+                      <option value="relation">relation</option>
+                      <option value="user">user</option>
+                      <option value="url">url</option>
+                      <option value="status">status</option>
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Options (comma separated)</span>
+                    <input
+                      type="text"
+                      value={field.optionsText}
+                      onChange={(event) =>
+                        updateSchemaField(index, { optionsText: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Description</span>
+                    <input
+                      type="text"
+                      value={field.description}
+                      onChange={(event) =>
+                        updateSchemaField(index, { description: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Relation type id</span>
+                    <input
+                      type="text"
+                      value={field.relationEntityTypeId}
+                      onChange={(event) =>
+                        updateSchemaField(index, {
+                          relationEntityTypeId: event.target.value,
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="checkbox-field">
+                    <input
+                      type="checkbox"
+                      checked={field.required}
+                      onChange={(event) =>
+                        updateSchemaField(index, { required: event.target.checked })
+                      }
+                    />
+                    <span>Required</span>
+                  </label>
+                  <label className="checkbox-field">
+                    <input
+                      type="checkbox"
+                      checked={field.allowMultiple}
+                      onChange={(event) =>
+                        updateSchemaField(index, { allowMultiple: event.target.checked })
+                      }
+                    />
+                    <span>Allow multiple</span>
+                  </label>
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    onClick={() => removeSchemaField(index)}
+                  >
+                    Remove field
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="button button--ghost button--full"
+              onClick={addSchemaField}
+              disabled={!token || !selectedWorkspaceId || !!busyLabel || schemaSaveBusy}
+            >
+              Add field
             </button>
           </section>
 
@@ -613,7 +1121,12 @@ export function App() {
                 onClick={() =>
                   token &&
                   selectedWorkspaceId &&
-                  void withAction('Обновление пространств', () => loadSpaces(token, selectedWorkspaceId))
+                  void withAction('Обновление пространств', async () => {
+                    await Promise.all([
+                      loadSpaces(token, selectedWorkspaceId),
+                      loadEntityTypes(token, selectedWorkspaceId),
+                    ]);
+                  })
                 }
               >
                 Обновить
@@ -677,46 +1190,73 @@ export function App() {
 
           <section className="panel">
             <div className="panel__header">
-              <h2>Инспектор</h2>
-              <span>{selectedEntity ? selectedEntity.title : 'ничего не выбрано'}</span>
+              <h2>Detail view</h2>
+              <span>{selectedEntity ? selectedEntity.title : 'nothing selected'}</span>
             </div>
-            {selectedEntity ? (
-              <div className="inspector">
-                <div className="inspector__identity">
-                  <strong>{selectedEntity.title}</strong>
-                  <span>{selectedEntity.id}</span>
+            {selectedEntity && entityDetailDraft ? (
+              <div className="detail-form">
+                <div className="detail-form__meta">
+                  <strong>{selectedEntity.id}</strong>
+                  <span>{relatedToSelectedEntity.length} relations</span>
                 </div>
-                <p>{selectedEntity.summary ?? 'Описания пока нет.'}</p>
-                <dl className="meta-grid">
-                  <div>
-                    <dt>Входящие/исходящие</dt>
-                    <dd>{relatedToSelectedEntity.length}</dd>
-                  </div>
-                  <div>
-                    <dt>Обновлено</dt>
-                    <dd>{new Date(selectedEntity.updatedAt).toLocaleDateString()}</dd>
-                  </div>
-                </dl>
-                <div className="inspector__relations">
-                  {relatedToSelectedEntity.length === 0 ? (
-                    <p>Связей пока нет.</p>
+                <label className="field">
+                  <span>Entity type</span>
+                  <select
+                    value={entityDetailDraft.entityTypeId ?? ''}
+                    onChange={(event) => handleDetailEntityTypeChange(event.target.value)}
+                  >
+                    <option value="">Untyped</option>
+                    {entityTypes.map((entityType) => (
+                      <option key={entityType.id} value={entityType.id}>
+                        {entityType.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Title</span>
+                  <input
+                    type="text"
+                    value={entityDetailDraft.title}
+                    onChange={(event) => updateDetailDraft({ title: event.target.value })}
+                  />
+                </label>
+                <label className="field">
+                  <span>Summary</span>
+                  <textarea
+                    rows={3}
+                    value={entityDetailDraft.summary}
+                    onChange={(event) => updateDetailDraft({ summary: event.target.value })}
+                  />
+                </label>
+                <div className="detail-fields">
+                  {selectedEntityType?.fields.length ? (
+                    selectedEntityType.fields
+                      .slice()
+                      .sort((left, right) => left.order - right.order)
+                      .map((field) => (
+                        <div className="detail-field-row" key={field.id}>
+                          {renderFieldEditor(field)}
+                        </div>
+                      ))
                   ) : (
-                    <ul className="compact-list">
-                      {relatedToSelectedEntity.map((relation) => (
-                        <li key={relation.id}>
-                          <strong>{relation.relationType}</strong>
-                          <span>
-                            {relation.fromEntityId} → {relation.toEntityId}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
+                    <p className="panel__hint">
+                      This record has no typed fields yet. Select a type or add fields in schema layer.
+                    </p>
                   )}
                 </div>
+                <button
+                  type="button"
+                  className="button button--full"
+                  onClick={saveEntityDetail}
+                  disabled={!token || !selectedSpaceId || !!busyLabel || entitySaveBusy}
+                >
+                  {entitySaveBusy ? 'Saving...' : 'Save record'}
+                </button>
               </div>
             ) : (
               <p className="panel__hint">
-                Нажми на карточку сущности, чтобы посмотреть её метаданные и связанные записи.
+                Select any canvas node to open and edit entity detail.
               </p>
             )}
           </section>

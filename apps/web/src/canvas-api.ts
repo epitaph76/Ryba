@@ -4,6 +4,7 @@ import type {
   CanvasStateInput,
   CanvasStateRecord,
   EntityRecord,
+  EntityTypeRecord,
   RelationRecord,
   SpaceRecord,
   UserRecord,
@@ -120,6 +121,7 @@ export const canvasApi = {
     token: string,
     spaceId: string,
     input: {
+      entityTypeId?: string | null;
       title: string;
       summary?: string | null;
       properties?: Record<string, unknown>;
@@ -130,6 +132,7 @@ export const canvasApi = {
       {
         method: 'POST',
         body: JSON.stringify({
+          entityTypeId: input.entityTypeId ?? undefined,
           title: input.title,
           summary: input.summary ?? null,
           properties: input.properties ?? {},
@@ -172,6 +175,92 @@ export const canvasApi = {
 
   getCanvas(token: string, spaceId: string) {
     return request<CanvasStateRecord>(`/spaces/${spaceId}/canvas`, { method: 'GET' }, token);
+  },
+
+  listEntityTypes(token: string, workspaceId: string) {
+    return request<ListResponse<EntityTypeRecord>>(
+      `/workspaces/${workspaceId}/entity-types`,
+      { method: 'GET' },
+      token,
+    );
+  },
+
+  createEntityType(
+    token: string,
+    workspaceId: string,
+    input: {
+      name: string;
+      slug: string;
+      description?: string | null;
+      color?: string | null;
+      icon?: string | null;
+      fields: Array<{
+        key: string;
+        label: string;
+        fieldType: EntityTypeRecord['fields'][number]['fieldType'];
+        description?: string | null;
+        required?: boolean;
+        config?: Record<string, unknown>;
+      }>;
+    },
+  ) {
+    return request<EntityTypeRecord>(
+      `/workspaces/${workspaceId}/entity-types`,
+      {
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+      token,
+    );
+  },
+
+  updateEntityType(
+    token: string,
+    entityTypeId: string,
+    input: {
+      name?: string;
+      slug?: string;
+      description?: string | null;
+      color?: string | null;
+      icon?: string | null;
+      fields?: Array<{
+        key: string;
+        label: string;
+        fieldType: EntityTypeRecord['fields'][number]['fieldType'];
+        description?: string | null;
+        required?: boolean;
+        config?: Record<string, unknown>;
+      }>;
+    },
+  ) {
+    return request<EntityTypeRecord>(
+      `/entity-types/${entityTypeId}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(input),
+      },
+      token,
+    );
+  },
+
+  updateEntity(
+    token: string,
+    entityId: string,
+    input: {
+      entityTypeId?: string | null;
+      title?: string;
+      summary?: string | null;
+      properties?: Record<string, unknown>;
+    },
+  ) {
+    return request<EntityRecord>(
+      `/entities/${entityId}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(input),
+      },
+      token,
+    );
   },
 
   saveCanvas(token: string, spaceId: string, input: CanvasStateInput) {

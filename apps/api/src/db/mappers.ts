@@ -2,6 +2,8 @@ import { canvasLayoutSchema } from '@ryba/schemas';
 import type {
   CanvasStateRecord,
   EntityRecord,
+  EntityTypeFieldRecord,
+  EntityTypeRecord,
   JsonObject,
   RelationRecord,
   SpaceRecord,
@@ -12,6 +14,8 @@ import type {
 
 import type {
   entities,
+  entityTypeFields,
+  entityTypes,
   relations,
   spaceCanvasStates,
   spaces,
@@ -25,6 +29,8 @@ type WorkspaceRow = typeof workspaces.$inferSelect;
 type WorkspaceMemberRow = typeof workspaceMembers.$inferSelect;
 type SpaceRow = typeof spaces.$inferSelect;
 type EntityRow = typeof entities.$inferSelect;
+type EntityTypeRow = typeof entityTypes.$inferSelect;
+type EntityTypeFieldRow = typeof entityTypeFields.$inferSelect;
 type RelationRow = typeof relations.$inferSelect;
 type SpaceCanvasStateRow = typeof spaceCanvasStates.$inferSelect;
 
@@ -78,11 +84,44 @@ export const toEntityRecord = (row: EntityRow): EntityRecord => ({
   id: row.id,
   workspaceId: row.workspaceId,
   spaceId: row.spaceId,
+  entityTypeId: row.entityTypeId,
   title: row.title,
   summary: row.summary,
   properties: ensureJsonObject(row.properties),
   createdByUserId: row.createdByUserId,
   updatedByUserId: row.updatedByUserId,
+  createdAt: row.createdAt,
+  updatedAt: row.updatedAt,
+});
+
+export const toEntityTypeFieldRecord = (row: EntityTypeFieldRow): EntityTypeFieldRecord => ({
+  id: row.id,
+  workspaceId: row.workspaceId,
+  entityTypeId: row.entityTypeId,
+  key: row.key,
+  label: row.label,
+  fieldType: row.fieldType as EntityTypeFieldRecord['fieldType'],
+  description: row.description,
+  required: row.required,
+  order: row.order,
+  config: ensureJsonObject(row.config),
+  createdAt: row.createdAt,
+  updatedAt: row.updatedAt,
+});
+
+export const toEntityTypeRecord = (
+  row: EntityTypeRow,
+  fields: EntityTypeFieldRecord[],
+): EntityTypeRecord => ({
+  id: row.id,
+  workspaceId: row.workspaceId,
+  name: row.name,
+  slug: row.slug,
+  description: row.description,
+  color: row.color,
+  icon: row.icon,
+  isSystem: row.isSystem,
+  fields,
   createdAt: row.createdAt,
   updatedAt: row.updatedAt,
 });

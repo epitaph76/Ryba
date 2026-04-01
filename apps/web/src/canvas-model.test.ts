@@ -10,6 +10,7 @@ describe('canvas-model', () => {
           id: 'entity-a',
           workspaceId: 'workspace-1',
           spaceId: 'space-1',
+          entityTypeId: 'type-company',
           title: 'Alpha',
           summary: 'First',
           properties: {},
@@ -22,11 +23,27 @@ describe('canvas-model', () => {
           id: 'entity-b',
           workspaceId: 'workspace-1',
           spaceId: 'space-1',
+          entityTypeId: null,
           title: 'Beta',
           summary: null,
           properties: {},
           createdByUserId: 'user-1',
           updatedByUserId: 'user-1',
+          createdAt: '2026-04-01T00:00:00.000Z',
+          updatedAt: '2026-04-01T00:00:00.000Z',
+        },
+      ],
+      entityTypes: [
+        {
+          id: 'type-company',
+          workspaceId: 'workspace-1',
+          name: 'Company',
+          slug: 'company',
+          description: null,
+          color: null,
+          icon: null,
+          isSystem: false,
+          fields: [],
           createdAt: '2026-04-01T00:00:00.000Z',
           updatedAt: '2026-04-01T00:00:00.000Z',
         },
@@ -83,6 +100,7 @@ describe('canvas-model', () => {
 
     expect(graph.nodes).toHaveLength(2);
     expect(graph.edges).toHaveLength(1);
+    expect(graph.nodes[0]?.data.entityTypeName).toBe('Company');
     expect(graph.nodes[1]?.selected).toBe(true);
     expect(graph.edges[0]?.data?.relationType).toBe('depends_on');
   });
@@ -101,6 +119,7 @@ describe('canvas-model', () => {
             entityId: 'entity-a',
             title: 'Alpha',
             summary: null,
+            entityTypeName: 'Company',
             relationCount: 1,
           },
         },

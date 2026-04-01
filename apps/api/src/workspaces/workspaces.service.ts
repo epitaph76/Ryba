@@ -9,7 +9,9 @@ import type { WorkspaceMemberRecord, WorkspaceRecord } from '@ryba/types';
 import { ApiException } from '../common/api-exception';
 import { DatabaseService } from '../database.service';
 import { toWorkspaceMemberRecord, toWorkspaceRecord } from '../db/mappers';
-import { workspaceMembers, workspaces } from '../db/schema';
+import { entityTypeFields, entityTypes, workspaceMembers, workspaces } from '../db/schema';
+import { DEFAULT_ENTITY_TYPE_TEMPLATES } from '../entity-types/entity-type-templates';
+import { normalizeFieldConfig } from '../entity-types/entity-value';
 
 type CreateWorkspaceRequest = z.infer<typeof createWorkspaceRequestSchema>;
 
@@ -40,6 +42,32 @@ export class WorkspacesService {
 
     const workspaceId = randomUUID();
     const membershipId = randomUUID();
+    const now = new Date().toISOString();
+    const seededEntityTypes = DEFAULT_ENTITY_TYPE_TEMPLATES.map((template) => ({
+      id: randomUUID(),
+      workspaceId,
+      name: template.name,
+      slug: template.slug,
+      description: template.description,
+      color: template.color,
+      icon: template.icon,
+      isSystem: true,
+      createdAt: now,
+      updatedAt: now,
+      fields: template.fields.map((field, index) => ({
+        id: randomUUID(),
+        workspaceId,
+        key: field.key,
+        label: field.label,
+        fieldType: field.fieldType,
+        description: field.description ?? null,
+        required: field.required ?? false,
+        order: index,
+        config: normalizeFieldConfig(field.fieldType, field.config ?? {}),
+        createdAt: now,
+        updatedAt: now,
+      })),
+    }));
 
     const workspace = await db.transaction(async (tx) => {
       const [insertedWorkspace] = await tx
@@ -58,6 +86,40 @@ export class WorkspacesService {
         userId,
         role: 'owner',
       });
+
+      await tx.insert(entityTypes).values(
+        seededEntityTypes.map((entityType) => ({
+          id: entityType.id,
+          workspaceId: entityType.workspaceId,
+          name: entityType.name,
+          slug: entityType.slug,
+          description: entityType.description,
+          color: entityType.color,
+          icon: entityType.icon,
+          isSystem: entityType.isSystem,
+          createdAt: entityType.createdAt,
+          updatedAt: entityType.updatedAt,
+        })),
+      );
+
+      await tx.insert(entityTypeFields).values(
+        seededEntityTypes.flatMap((entityType) =>
+          entityType.fields.map((field) => ({
+            id: field.id,
+            workspaceId: entityType.workspaceId,
+            entityTypeId: entityType.id,
+            key: field.key,
+            label: field.label,
+            fieldType: field.fieldType,
+            description: field.description,
+            required: field.required,
+            order: field.order,
+            config: field.config,
+            createdAt: field.createdAt,
+            updatedAt: field.updatedAt,
+          })),
+        ),
+      );
 
       return insertedWorkspace;
     });

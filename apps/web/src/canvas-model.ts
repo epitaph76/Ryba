@@ -4,6 +4,7 @@ import type {
   CanvasStateInput,
   CanvasStateRecord,
   EntityRecord,
+  EntityTypeRecord,
   RelationRecord,
 } from '@ryba/types';
 
@@ -11,6 +12,7 @@ export type CanvasEntityNodeData = {
   entityId: string;
   title: string;
   summary: string | null;
+  entityTypeName: string | null;
   relationCount: number;
 };
 
@@ -19,6 +21,7 @@ export type CanvasRelationEdge = Edge<{ relationId: string; relationType: string
 
 export function buildCanvasGraph(input: {
   entities: EntityRecord[];
+  entityTypes: EntityTypeRecord[];
   relations: RelationRecord[];
   canvas: CanvasStateRecord;
   selectedEntityId: string | null;
@@ -37,6 +40,7 @@ export function buildCanvasGraph(input: {
   }
 
   const entityById = new Map(input.entities.map((entity) => [entity.id, entity]));
+  const entityTypeById = new Map(input.entityTypes.map((entityType) => [entityType.id, entityType]));
   const relationById = new Map(input.relations.map((relation) => [relation.id, relation]));
 
   const nodes: CanvasEntityNode[] = [];
@@ -58,6 +62,9 @@ export function buildCanvasGraph(input: {
         entityId: entity.id,
         title: entity.title,
         summary: entity.summary,
+        entityTypeName: entity.entityTypeId
+          ? entityTypeById.get(entity.entityTypeId)?.name ?? 'Typed record'
+          : null,
         relationCount: relationCountByEntityId.get(entity.id) ?? 0,
       },
     });
