@@ -1237,11 +1237,11 @@ CRM появился как прикладной сценарий, не разр
 
 Ближайший правильный ход:
 
-1. перейти к S-5 documents и narrative layer;
-2. использовать уже готовый S-4 detail/schema слой как опору для entity references и narrative workflows;
-3. сохранить границу между visual state канвы и domain state предметной модели;
-4. оставить Docker-first workflow и расширять smoke/integration coverage по мере роста document layer;
-5. не раздувать S-4 отдельными API/UI-усложнениями, пока их прямо не потребует S-5.
+1. перейти к S-6 tables и saved views;
+2. использовать уже готовые S-4 detail/schema слой и S-5 document layer как опору для tabular workflows и saved views;
+3. сохранить связь между table lens и core entities без параллельного источника истины вне основной доменной модели;
+4. оставить Docker-first workflow и расширять smoke/integration coverage по мере роста table layer;
+5. не раздувать S-6 в spreadsheet или BI-платформу раньше, чем этого потребует реальный продуктовый сценарий.
 
 ## Главный контрольный вопрос проекта
 
