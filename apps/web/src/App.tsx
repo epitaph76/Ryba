@@ -42,12 +42,12 @@ function EntityCardNode({ data, selected }: NodeProps<CanvasEntityNodeData>) {
   return (
     <article className={`canvas-node${selected ? ' is-selected' : ''}`}>
       <div className="canvas-node__header">
-        <span className="canvas-node__badge">entity</span>
-        <span className="canvas-node__meta">{data.relationCount} links</span>
+        <span className="canvas-node__badge">сущность</span>
+        <span className="canvas-node__meta">{data.relationCount} связей</span>
       </div>
       <strong>{data.title}</strong>
       <span className="canvas-node__id">{data.entityId}</span>
-      <p>{data.summary ?? 'Empty summary. Open the inspector to enrich this record later.'}</p>
+      <p>{data.summary ?? 'Описание пока пустое. Открой инспектор, чтобы дополнить запись.'}</p>
       <Handle type="target" position={Position.Left} className="canvas-node__handle" />
       <Handle type="source" position={Position.Right} className="canvas-node__handle" />
     </article>
@@ -91,14 +91,14 @@ export function App() {
 
   const [email, setEmail] = useState('demo@ryba.local');
   const [password, setPassword] = useState('Password123');
-  const [displayName, setDisplayName] = useState('Ryba Demo');
-  const [workspaceName, setWorkspaceName] = useState('Canvas Workspace');
+  const [displayName, setDisplayName] = useState('Демо Ryba');
+  const [workspaceName, setWorkspaceName] = useState('Рабочее пространство канвы');
   const [workspaceSlug, setWorkspaceSlug] = useState('canvas-workspace');
-  const [spaceName, setSpaceName] = useState('General');
+  const [spaceName, setSpaceName] = useState('Общее');
   const [spaceSlug, setSpaceSlug] = useState('general');
-  const [quickEntityTitle, setQuickEntityTitle] = useState('New entity');
-  const [quickEntitySummary, setQuickEntitySummary] = useState('Created from the S3 canvas');
-  const [relationType, setRelationType] = useState('related_to');
+  const [quickEntityTitle, setQuickEntityTitle] = useState('Новая сущность');
+  const [quickEntitySummary, setQuickEntitySummary] = useState('Создано из канвы S3');
+  const [relationType, setRelationType] = useState('связано с');
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null;
   const selectedSpace = spaces.find((space) => space.id === selectedSpaceId) ?? null;
@@ -125,7 +125,7 @@ export function App() {
     localStorage.setItem(TOKEN_STORAGE_KEY, session.accessToken);
     setToken(session.accessToken);
     setCurrentUser(session.user);
-    appendLog(`Signed in as ${session.user.email}`);
+    appendLog(`Вход выполнен: ${session.user.email}`);
   };
 
   const clearSession = () => {
@@ -145,7 +145,7 @@ export function App() {
     setSelectedEntityId(null);
     setCanvasError(null);
     setLayoutDirty(false);
-    appendLog('Session cleared');
+    appendLog('Сессия очищена');
   };
 
   const withAction = async (label: string, task: () => Promise<void>) => {
@@ -153,7 +153,7 @@ export function App() {
     try {
       await task();
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unexpected error';
+      const message = error instanceof Error ? error.message : 'Непредвиденная ошибка';
       appendLog(message);
       setCanvasError(message);
     } finally {
@@ -246,7 +246,7 @@ export function App() {
     setEdgeLayouts(saved.edges);
     setViewport(saved.viewport);
     setLayoutDirty(false);
-    appendLog(`Layout saved: ${reason}`);
+    appendLog(`Макет сохранён: ${reason}`);
   };
 
   const getCanvasCenterPosition = () => {
@@ -270,7 +270,7 @@ export function App() {
       return;
     }
 
-    const title = quickEntityTitle.trim() || `Entity ${entities.length + 1}`;
+    const title = quickEntityTitle.trim() || `Сущность ${entities.length + 1}`;
     const summary = quickEntitySummary.trim() || null;
     const created = await canvasApi.createEntity(token, selectedSpaceId, {
       title,
@@ -304,7 +304,7 @@ export function App() {
       }).payload,
     );
 
-    appendLog(`Entity created from ${origin}: ${created.title}`);
+    appendLog(`Сущность создана из ${origin}: ${created.title}`);
     await loadCanvas(token, selectedSpaceId, created.id);
   };
 
@@ -313,7 +313,7 @@ export function App() {
       return;
     }
 
-    void withAction('Loading session', async () => {
+    void withAction('Загрузка сессии', async () => {
       const user = await canvasApi.me(token);
       setCurrentUser(user);
       await loadWorkspaces(token);
@@ -325,7 +325,7 @@ export function App() {
       return;
     }
 
-    void withAction('Loading spaces', async () => {
+    void withAction('Загрузка пространств', async () => {
       await loadSpaces(token, selectedWorkspaceId);
     });
   }, [selectedWorkspaceId, token]);
@@ -353,7 +353,7 @@ export function App() {
   }, [canvasState, flowInstance]);
 
   const authenticateRegister = () =>
-    withAction('Registering', async () => {
+    withAction('Регистрация', async () => {
       const session = await canvasApi.register({
         email,
         password,
@@ -363,7 +363,7 @@ export function App() {
     });
 
   const authenticateLogin = () =>
-    withAction('Logging in', async () => {
+    withAction('Вход', async () => {
       const session = await canvasApi.login({
         email,
         password,
@@ -372,7 +372,7 @@ export function App() {
     });
 
   const createWorkspace = () =>
-    withAction('Creating workspace', async () => {
+    withAction('Создание рабочего пространства', async () => {
       if (!token) {
         return;
       }
@@ -381,13 +381,13 @@ export function App() {
         name: workspaceName,
         slug: workspaceSlug,
       });
-      appendLog(`Workspace created: ${workspace.slug}`);
+      appendLog(`Рабочее пространство создано: ${workspace.slug}`);
       await loadWorkspaces(token);
       setSelectedWorkspaceId(workspace.id);
     });
 
   const createSpace = () =>
-    withAction('Creating space', async () => {
+    withAction('Создание пространства', async () => {
       if (!token || !selectedWorkspaceId) {
         return;
       }
@@ -396,14 +396,14 @@ export function App() {
         name: spaceName,
         slug: spaceSlug,
       });
-      appendLog(`Space created: ${space.slug}`);
+      appendLog(`Пространство создано: ${space.slug}`);
       await loadSpaces(token, selectedWorkspaceId);
       setSelectedSpaceId(space.id);
     });
 
   const quickCreateCenteredEntity = () =>
-    withAction('Creating entity', async () => {
-      await createEntityAtPosition(getCanvasCenterPosition(), 'toolbar');
+    withAction('Создание сущности', async () => {
+      await createEntityAtPosition(getCanvasCenterPosition(), 'панели');
     });
 
   const handleCanvasDoubleClick = (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -417,7 +417,7 @@ export function App() {
       return;
     }
 
-    void withAction('Creating entity', async () => {
+    void withAction('Создание сущности', async () => {
       const bounds = flowWrapperRef.current?.getBoundingClientRect();
 
       if (!bounds) {
@@ -429,7 +429,7 @@ export function App() {
         y: event.clientY - bounds.top,
       });
 
-      await createEntityAtPosition(position, 'canvas');
+      await createEntityAtPosition(position, 'канвы');
     });
   };
 
@@ -442,17 +442,17 @@ export function App() {
     const targetId = connection.target;
 
     if (sourceId === targetId) {
-      appendLog('A relation needs two different entities');
+      appendLog('Для связи нужны две разные сущности');
       return;
     }
 
-    void withAction('Creating relation', async () => {
+    void withAction('Создание связи', async () => {
       await canvasApi.createRelation(token, selectedSpaceId, {
         fromEntityId: sourceId,
         toEntityId: targetId,
         relationType,
       });
-      appendLog(`Relation created: ${relationType}`);
+      appendLog(`Связь создана: ${relationType}`);
       await loadCanvas(token, selectedSpaceId, targetId);
     });
   };
@@ -472,29 +472,29 @@ export function App() {
     <main className="s3-app">
       <header className="s3-hero">
         <div className="s3-hero__copy">
-          <span className="eyebrow">Ryba S-3 base canvas</span>
-          <h1>Real canvas over the core domain</h1>
+          <span className="eyebrow">Ryba S-3 базовая канва</span>
+          <h1>Живая канва поверх ядра данных</h1>
           <p>
-            This screen is the first working navigation lens over real entities and relations.
-            Double-click the canvas to create a node, drag cards to arrange the layout, and
-            connect handles to create relations.
+            Это первый рабочий визуальный слой поверх реальных сущностей и связей.
+            Дважды кликни по канве, чтобы создать узел, перетаскивай карточки для настройки
+            макета и соединяй хендлы, чтобы создавать связи.
           </p>
         </div>
         <div className="s3-hero__stats">
           <div>
-            <span>Workspace</span>
-            <strong>{selectedWorkspace?.slug ?? 'not selected'}</strong>
+            <span>Рабочее пространство</span>
+            <strong>{selectedWorkspace?.slug ?? 'не выбрано'}</strong>
           </div>
           <div>
-            <span>Space</span>
-            <strong>{selectedSpace?.slug ?? 'not selected'}</strong>
+            <span>Пространство</span>
+            <strong>{selectedSpace?.slug ?? 'не выбрано'}</strong>
           </div>
           <div>
-            <span>Layout</span>
-            <strong>{layoutDirty ? 'unsaved' : canvasState?.updatedAt ? 'saved' : 'default'}</strong>
+            <span>Макет</span>
+            <strong>{layoutDirty ? 'не сохранён' : canvasState?.updatedAt ? 'сохранён' : 'по умолчанию'}</strong>
           </div>
           <div>
-            <span>Records</span>
+            <span>Записи</span>
             <strong>
               {entities.length} / {relations.length}
             </strong>
@@ -506,15 +506,15 @@ export function App() {
         <aside className="s3-sidebar">
           <section className="panel">
             <div className="panel__header">
-              <h2>Session</h2>
-              <span>{currentUser?.email ?? 'guest'}</span>
+              <h2>Сессия</h2>
+              <span>{currentUser?.email ?? 'гость'}</span>
             </div>
             <label className="field">
-              <span>Email</span>
+              <span>Почта</span>
               <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
             </label>
             <label className="field">
-              <span>Password</span>
+              <span>Пароль</span>
               <input
                 type="password"
                 value={password}
@@ -522,7 +522,7 @@ export function App() {
               />
             </label>
             <label className="field">
-              <span>Display name</span>
+              <span>Отображаемое имя</span>
               <input
                 type="text"
                 value={displayName}
@@ -531,24 +531,24 @@ export function App() {
             </label>
             <div className="actions">
               <button type="button" className="button" disabled={!!busyLabel} onClick={authenticateRegister}>
-                Register
+                Регистрация
               </button>
               <button type="button" className="button button--ghost" disabled={!!busyLabel} onClick={authenticateLogin}>
-                Login
+                Войти
               </button>
             </div>
             <button type="button" className="button button--ghost button--full" disabled={!token} onClick={clearSession}>
-              Clear session
+              Очистить сессию
             </button>
           </section>
 
           <section className="panel">
             <div className="panel__header">
-              <h2>Context</h2>
-              <span>{busyLabel ?? 'ready'}</span>
+              <h2>Контекст</h2>
+              <span>{busyLabel ?? 'готово'}</span>
             </div>
             <label className="field">
-              <span>Workspace name</span>
+              <span>Название рабочего пространства</span>
               <input
                 type="text"
                 value={workspaceName}
@@ -556,7 +556,7 @@ export function App() {
               />
             </label>
             <label className="field">
-              <span>Workspace slug</span>
+              <span>Слаг рабочего пространства</span>
               <input
                 type="text"
                 value={workspaceSlug}
@@ -565,24 +565,24 @@ export function App() {
             </label>
             <div className="actions">
               <button type="button" className="button" disabled={!token || !!busyLabel} onClick={createWorkspace}>
-                Create workspace
+                Создать рабочее пространство
               </button>
               <button
                 type="button"
                 className="button button--ghost"
                 disabled={!token || !!busyLabel}
-                onClick={() => token && void withAction('Refreshing workspaces', () => loadWorkspaces(token))}
+                onClick={() => token && void withAction('Обновление рабочих пространств', () => loadWorkspaces(token))}
               >
-                Refresh
+                Обновить
               </button>
             </div>
             <label className="field">
-              <span>Active workspace</span>
+              <span>Текущее рабочее пространство</span>
               <select
                 value={selectedWorkspaceId}
                 onChange={(event) => setSelectedWorkspaceId(event.target.value)}
               >
-                <option value="">Select workspace</option>
+                <option value="">Выбери рабочее пространство</option>
                 {workspaces.map((workspace) => (
                   <option key={workspace.id} value={workspace.id}>
                     {workspace.name} ({workspace.slug})
@@ -591,11 +591,11 @@ export function App() {
               </select>
             </label>
             <label className="field">
-              <span>Space name</span>
+              <span>Название пространства</span>
               <input type="text" value={spaceName} onChange={(event) => setSpaceName(event.target.value)} />
             </label>
             <label className="field">
-              <span>Space slug</span>
+              <span>Слаг пространства</span>
               <input
                 type="text"
                 value={spaceSlug}
@@ -604,7 +604,7 @@ export function App() {
             </label>
             <div className="actions">
               <button type="button" className="button" disabled={!token || !selectedWorkspaceId || !!busyLabel} onClick={createSpace}>
-                Create space
+                Создать пространство
               </button>
               <button
                 type="button"
@@ -613,16 +613,16 @@ export function App() {
                 onClick={() =>
                   token &&
                   selectedWorkspaceId &&
-                  void withAction('Refreshing spaces', () => loadSpaces(token, selectedWorkspaceId))
+                  void withAction('Обновление пространств', () => loadSpaces(token, selectedWorkspaceId))
                 }
               >
-                Refresh
+                Обновить
               </button>
             </div>
             <label className="field">
-              <span>Active space</span>
+              <span>Текущее пространство</span>
               <select value={selectedSpaceId} onChange={(event) => setSelectedSpaceId(event.target.value)}>
-                <option value="">Select space</option>
+                <option value="">Выбери пространство</option>
                 {spaces.map((space) => (
                   <option key={space.id} value={space.id}>
                     {space.name} ({space.slug})
@@ -634,11 +634,11 @@ export function App() {
 
           <section className="panel">
             <div className="panel__header">
-              <h2>Canvas actions</h2>
-              <span>{canvasState?.updatedAt ? 'persisted' : 'default view'}</span>
+              <h2>Действия канвы</h2>
+              <span>{canvasState?.updatedAt ? 'сохранено' : 'вид по умолчанию'}</span>
             </div>
             <label className="field">
-              <span>Quick entity title</span>
+              <span>Быстрый заголовок сущности</span>
               <input
                 type="text"
                 value={quickEntityTitle}
@@ -646,7 +646,7 @@ export function App() {
               />
             </label>
             <label className="field">
-              <span>Quick entity summary</span>
+              <span>Быстрое описание сущности</span>
               <textarea
                 rows={3}
                 value={quickEntitySummary}
@@ -654,7 +654,7 @@ export function App() {
               />
             </label>
             <label className="field">
-              <span>Relation type for connect</span>
+              <span>Тип связи для соединения</span>
               <input
                 type="text"
                 value={relationType}
@@ -663,22 +663,22 @@ export function App() {
             </label>
             <div className="actions">
               <button type="button" className="button" disabled={!token || !selectedSpaceId || !!busyLabel} onClick={quickCreateCenteredEntity}>
-                Add at center
+                Добавить в центр
               </button>
-              <button type="button" className="button button--ghost" disabled={!token || !selectedSpaceId || !!busyLabel || !layoutDirty} onClick={() => void withAction('Saving layout', () => persistLayout('manual save'))}>
-                Save layout
+              <button type="button" className="button button--ghost" disabled={!token || !selectedSpaceId || !!busyLabel || !layoutDirty} onClick={() => void withAction('Сохранение макета', () => persistLayout('ручное сохранение'))}>
+                Сохранить макет
               </button>
             </div>
             <p className="panel__hint">
-              Double-click on the canvas to place a new entity. Connect the handles on two nodes to
-              create a relation.
+              Дважды кликни по канве, чтобы поставить новую сущность. Соедини хендлы двух узлов,
+              чтобы создать связь.
             </p>
           </section>
 
           <section className="panel">
             <div className="panel__header">
-              <h2>Inspector</h2>
-              <span>{selectedEntity ? selectedEntity.title : 'nothing selected'}</span>
+              <h2>Инспектор</h2>
+              <span>{selectedEntity ? selectedEntity.title : 'ничего не выбрано'}</span>
             </div>
             {selectedEntity ? (
               <div className="inspector">
@@ -686,27 +686,27 @@ export function App() {
                   <strong>{selectedEntity.title}</strong>
                   <span>{selectedEntity.id}</span>
                 </div>
-                <p>{selectedEntity.summary ?? 'No summary yet.'}</p>
+                <p>{selectedEntity.summary ?? 'Описания пока нет.'}</p>
                 <dl className="meta-grid">
                   <div>
-                    <dt>Inbound/outbound</dt>
+                    <dt>Входящие/исходящие</dt>
                     <dd>{relatedToSelectedEntity.length}</dd>
                   </div>
                   <div>
-                    <dt>Updated</dt>
+                    <dt>Обновлено</dt>
                     <dd>{new Date(selectedEntity.updatedAt).toLocaleDateString()}</dd>
                   </div>
                 </dl>
                 <div className="inspector__relations">
                   {relatedToSelectedEntity.length === 0 ? (
-                    <p>No relations yet.</p>
+                    <p>Связей пока нет.</p>
                   ) : (
                     <ul className="compact-list">
                       {relatedToSelectedEntity.map((relation) => (
                         <li key={relation.id}>
                           <strong>{relation.relationType}</strong>
                           <span>
-                            {relation.fromEntityId} to {relation.toEntityId}
+                            {relation.fromEntityId} → {relation.toEntityId}
                           </span>
                         </li>
                       ))}
@@ -716,18 +716,18 @@ export function App() {
               </div>
             ) : (
               <p className="panel__hint">
-                Click any entity card to inspect its metadata and linked relations.
+                Нажми на карточку сущности, чтобы посмотреть её метаданные и связанные записи.
               </p>
             )}
           </section>
 
           <section className="panel">
             <div className="panel__header">
-              <h2>Activity</h2>
+              <h2>Активность</h2>
               <span>{logLines.length}</span>
             </div>
             <ul className="compact-list">
-              {logLines.length === 0 ? <li>No actions yet.</li> : null}
+              {logLines.length === 0 ? <li>Действий пока не было.</li> : null}
               {logLines.map((line) => (
                 <li key={line}>{line}</li>
               ))}
@@ -738,13 +738,13 @@ export function App() {
         <section className="canvas-stage">
           <div className="canvas-toolbar">
             <div>
-              <strong>{selectedSpace?.name ?? 'Select a space'}</strong>
+              <strong>{selectedSpace?.name ?? 'Выбери пространство'}</strong>
               <span>
                 {canvasLoading
-                  ? 'Loading canvas...'
+                  ? 'Загрузка канвы...'
                   : selectedSpace
-                    ? 'Drag cards, connect handles, save when the layout feels right.'
-                    : 'Create or pick a space to open the S3 canvas.'}
+                    ? 'Перетаскивай карточки, соединяй хендлы и сохраняй макет, когда он тебя устроит.'
+                    : 'Создай пространство или выбери существующее, чтобы открыть канву S3.'}
               </span>
             </div>
             <div className="canvas-toolbar__actions">
@@ -752,12 +752,12 @@ export function App() {
                 type="button"
                 className="button button--ghost"
                 disabled={!token || !selectedSpaceId || !!busyLabel}
-                onClick={() => token && selectedSpaceId && void withAction('Refreshing canvas', () => loadCanvas(token, selectedSpaceId))}
+                onClick={() => token && selectedSpaceId && void withAction('Обновление канвы', () => loadCanvas(token, selectedSpaceId))}
               >
-                Refresh canvas
+                Обновить канву
               </button>
               <span className={`status-pill${layoutDirty ? ' is-warning' : ''}`}>
-                {layoutDirty ? 'Unsaved layout' : canvasState?.updatedAt ? 'Layout saved' : 'Default layout'}
+                {layoutDirty ? 'Макет не сохранён' : canvasState?.updatedAt ? 'Макет сохранён' : 'Макет по умолчанию'}
               </span>
             </div>
           </div>
@@ -765,22 +765,22 @@ export function App() {
           <div className="canvas-shell" ref={flowWrapperRef} onDoubleClick={handleCanvasDoubleClick}>
             {!token ? (
               <div className="canvas-empty">
-                <strong>Authorize first</strong>
-                <p>Use the session panel to register or log in before opening the canvas.</p>
+                <strong>Сначала авторизуйся</strong>
+                <p>Используй панель сессии, чтобы зарегистрироваться или войти перед открытием канвы.</p>
               </div>
             ) : !selectedSpace ? (
               <div className="canvas-empty">
-                <strong>Choose a space</strong>
-                <p>Create one from the sidebar or select an existing space to load real data.</p>
+                <strong>Выбери пространство</strong>
+                <p>Создай его в боковой панели или выбери существующее, чтобы загрузить реальные данные.</p>
               </div>
             ) : canvasLoading ? (
               <div className="canvas-empty">
-                <strong>Loading canvas</strong>
-                <p>Reading entities, relations and saved layout from the API.</p>
+                <strong>Загрузка канвы</strong>
+                <p>Читаю сущности, связи и сохранённый макет из API.</p>
               </div>
             ) : canvasError ? (
               <div className="canvas-empty">
-                <strong>Canvas error</strong>
+                <strong>Ошибка канвы</strong>
                 <p>{canvasError}</p>
               </div>
             ) : (
