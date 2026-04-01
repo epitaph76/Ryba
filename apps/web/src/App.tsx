@@ -815,8 +815,6 @@ export function App() {
                   setLayoutDirty(true);
                 }}
                 defaultEdgeOptions={{ style: { strokeWidth: 2.2, stroke: '#60a5fa' } }}
-                fitView={!canvasState?.updatedAt}
-                fitViewOptions={{ padding: 0.24 }}
                 proOptions={{ hideAttribution: true }}
               >
                 <MiniMap

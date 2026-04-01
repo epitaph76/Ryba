@@ -1,41 +1,41 @@
-# S-2 Core Domain Implementation Notes
+# S-2. Заметки по реализации core domain
 
-Date: `2026-03-30`
+Дата: `2026-03-30`
 
-## Scope
+## Область работы
 
-This document фиксирует фактическую реализацию этапа `S-2` из `PROJECT_STATUS.md`:
+Этот документ фиксирует фактическую реализацию этапа `S-2` из `PROJECT_STATUS.md`:
 
 - backend core domain (`auth`, `workspaces`, `spaces`, `entities`, `relations`);
-- JWT auth (minimal, без refresh token/OAuth/RBAC);
-- PostgreSQL schema + Drizzle migrations;
-- shared contracts в `@ryba/types` и `@ryba/schemas`;
+- JWT-аутентификацию в минимальном виде, без refresh token / OAuth / RBAC;
+- PostgreSQL-схему и миграции Drizzle;
+- общие контракты в `@ryba/types` и `@ryba/schemas`;
 - минимальный web-интерфейс для проверки end-to-end сценария.
 
-Out of scope (не реализовано в S-2):
+Что не входило в `S-2`:
 
-- canvas product layer (`S-3`);
-- documents/tables/external data/CRM;
+- продуктовый слой канвы (`S-3`);
+- документы, таблицы, внешние данные и CRM;
 - permission model как отдельный слой;
-- production UI polish.
+- production-polish интерфейса.
 
-## Delivered Architecture
+## Реализованная архитектура
 
-### API foundation
+### Основа API
 
-- NestJS + Fastify adapter
-- OpenAPI/Swagger: `GET /docs`
-- Global error envelope (`ApiEnvelope`) with codes:
+- NestJS + Fastify adapter;
+- OpenAPI / Swagger по адресу `GET /docs`;
+- глобальный формат ошибки (`ApiEnvelope`) с кодами:
   - `VALIDATION_ERROR`
   - `NOT_FOUND`
   - `CONFLICT`
   - `UNAUTHORIZED`
   - `FORBIDDEN`
   - `INTERNAL_ERROR`
-- JWT guard для всех core endpoints, кроме `/auth/*`
-- runtime validation через shared Zod schemas
+- JWT guard для всех core-endpoints, кроме `/auth/*`;
+- runtime-валидация через общие Zod-схемы.
 
-### Core endpoints
+### Основные эндпоинты
 
 - `POST /auth/register`
 - `POST /auth/login`
@@ -54,9 +54,9 @@ Out of scope (не реализовано в S-2):
 - `PATCH /relations/:relationId`
 - `DELETE /relations/:relationId`
 
-## Data Layer (PostgreSQL + Drizzle)
+## Слой данных (PostgreSQL + Drizzle)
 
-### Tables
+### Таблицы
 
 - `users`
 - `workspaces`
@@ -65,11 +65,11 @@ Out of scope (не реализовано в S-2):
 - `entities`
 - `relations`
 
-### Constraints
+### Ограничения
 
-- `users.email` unique
-- `workspace_members(workspace_id, user_id)` unique
-- FK chain:
+- `users.email` уникален;
+- `workspace_members(workspace_id, user_id)` уникален;
+- цепочка внешних ключей:
   - `spaces.workspace_id -> workspaces.id`
   - `entities.workspace_id -> workspaces.id`
   - `entities.space_id -> spaces.id`
@@ -78,7 +78,7 @@ Out of scope (не реализовано в S-2):
   - `relations.from_entity_id -> entities.id`
   - `relations.to_entity_id -> entities.id`
 
-### Indexes
+### Индексы
 
 - `entities(workspace_id)`
 - `entities(space_id)`
@@ -87,26 +87,26 @@ Out of scope (не реализовано в S-2):
 - `relations(from_entity_id)`
 - `relations(to_entity_id)`
 
-Migration artifact:
+Артефакт миграции:
 
 - `apps/api/drizzle/0000_perfect_greymalkin.sql`
 
-## Web Integration (minimal)
+## Интеграция веба
 
-`apps/web` получил отдельную вкладку **Core S-2**:
+В `apps/web` был добавлен отдельный интерфейс для проверки `S-2`:
 
-- register/login
-- create/list workspace
-- create/list space
-- create/list entity
-- create/list relation
-- action log panel
+- регистрация и вход;
+- создание и просмотр workspace;
+- создание и просмотр space;
+- создание и просмотр entity;
+- создание и просмотр relation;
+- панель журнала действий.
 
-Token storage: `localStorage` (`ryba_s2_access_token`) for dev verification.
+Токен хранится в `localStorage` под ключом `ryba_s2_access_token` для dev-проверки.
 
-## Testing and Validation
+## Тестирование и валидация
 
-### Automated checks run
+### Запущенные автоматические проверки
 
 - `pnpm --filter @ryba/types typecheck`
 - `pnpm --filter @ryba/schemas typecheck`
@@ -116,66 +116,66 @@ Token storage: `localStorage` (`ryba_s2_access_token`) for dev verification.
 - `pnpm --filter @ryba/api test`
 - `pnpm build`
 
-### API integration tests (`apps/api/test/s2.integration.test.ts`)
+### Интеграционные тесты API (`apps/api/test/s2.integration.test.ts`)
 
-Covered scenarios:
+Покрытые сценарии:
 
-1. Full flow: `register -> workspace -> space -> entity -> relation -> list`.
-2. Validation error when relation references non-existing entity.
-3. Cross-workspace access denied (`FORBIDDEN`).
-4. Contract parse checks with shared Zod schemas on runtime responses.
+1. Полный поток: `register -> workspace -> space -> entity -> relation -> list`.
+2. Ошибка валидации, если relation ссылается на несуществующую сущность.
+3. Запрет доступа между разными workspace (`FORBIDDEN`).
+4. Проверка контрактов через общие Zod-схемы на runtime-ответах.
 
-## How to Run and Test Locally
+## Как запустить и проверить локально
 
-1. Install dependencies:
+1. Установить зависимости:
 
 ```bash
 corepack pnpm install
 ```
 
-2. Prepare env:
+2. Подготовить env:
 
 ```bash
 copy .env.example .env
 ```
 
-3. Start PostgreSQL:
+3. Поднять PostgreSQL:
 
 ```bash
 docker compose up -d postgres
 ```
 
-4. Apply migrations:
+4. Применить миграции:
 
 ```bash
 corepack pnpm db:migrate
 ```
 
-5. Start API:
+5. Запустить API:
 
 ```bash
 corepack pnpm --filter @ryba/api dev
 ```
 
-6. Start web:
+6. Запустить web:
 
 ```bash
 corepack pnpm --filter @ryba/web dev
 ```
 
-7. Verify manually:
+7. Проверить вручную:
 
-- open `http://localhost:3001/docs`
-- open `http://localhost:5173`
-- in web choose **Core S-2** tab and run flow:
-  - register/login
-  - create workspace
-  - create space
-  - create 2 entities
-  - create relation
-  - verify entities/relations list
+- открыть `http://localhost:3001/docs`;
+- открыть `http://localhost:5173`;
+- в вебе пройти сценарий:
+  - зарегистрироваться или войти;
+  - создать workspace;
+  - создать space;
+  - создать 2 сущности;
+  - создать relation;
+  - проверить список entities и relations.
 
-8. Run automated tests:
+8. Запустить автоматические тесты:
 
 ```bash
 $env:DATABASE_URL='postgresql://postgres:postgres@localhost:5432/ryba'
@@ -183,6 +183,6 @@ $env:JWT_SECRET='change-me-s2-tests'
 corepack pnpm --filter @ryba/api test
 ```
 
-## Next Step
+## Следующий шаг
 
-After S-2 completion, correct next phase is `S-3` (base canvas on top of real core entities and relations).
+После завершения `S-2` правильный следующий этап: `S-3`, то есть базовая канва поверх реальных сущностей и связей.

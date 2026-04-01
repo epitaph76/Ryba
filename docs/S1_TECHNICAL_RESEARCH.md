@@ -1,94 +1,94 @@
-# S-1 Technical Research Notes
+# S-1. Заметки по техническому исследованию
 
-Date: `2026-03-30`
+Дата: `2026-03-30`
 
-## Scope
+## Область работы
 
-This note records the technical findings for S-1 (technical research) before starting core domain implementation.
+Этот документ фиксирует технические выводы по этапу `S-1` до начала реализации core domain.
 
-Implemented prototypes:
+Подготовленные прототипы:
 
-- `apps/web`: React + Vite prototype harness with:
-  - React Flow canvas with custom nodes
-  - TanStack Table + TanStack Virtual table prototype
-  - Tiptap editor prototype with entity token references
-- `apps/api`: minimal Nest API with:
-  - `GET /health`
-  - `GET /db/health` (PostgreSQL probe via `SELECT 1`)
-- `apps/collab`: Hocuspocus + Yjs collaboration server with lifecycle logs
-- `packages/types`: shared domain types
-- `packages/schemas`: shared zod schemas
-- Docker setup:
-  - `docker-compose.yml` for Postgres/API/Collab/Web
-  - app-level Dockerfiles for `api`, `web`, `collab`
+- `apps/web`: прототип на React + Vite, включающий:
+  - канву на React Flow с кастомными узлами;
+  - табличный прототип на TanStack Table + TanStack Virtual;
+  - прототип редактора на Tiptap с токенами ссылок на сущности.
+- `apps/api`: минимальный Nest API с эндпоинтами:
+  - `GET /health`;
+  - `GET /db/health` (проверка PostgreSQL через `SELECT 1`).
+- `apps/collab`: сервер совместной работы на Hocuspocus + Yjs с логами жизненного цикла.
+- `packages/types`: общие типы домена.
+- `packages/schemas`: общие zod-схемы.
+- Docker-конфигурация:
+  - `docker-compose.yml` для Postgres/API/Collab/Web;
+  - отдельные Dockerfile для `api`, `web`, `collab`.
 
-## Dev Workflow (Docker Desktop first)
+## Рабочий цикл разработки
 
-1. Copy `.env.example` to `.env` and adjust if needed.
-2. Start infra:
+1. Скопировать `.env.example` в `.env` и при необходимости скорректировать значения.
+2. Поднять инфраструктуру:
    - `docker compose up -d postgres`
-3. Start API + Postgres in Docker:
+3. Поднять API и Postgres в Docker:
    - `docker compose up --build -d postgres api`
-4. Optional:
+4. При необходимости дополнительно поднять:
    - `docker compose up --build -d collab`
    - `docker compose --profile frontend up --build -d web`
-5. Stop all:
+5. Остановить всё:
    - `docker compose down`
 
-## Findings by Prototype
+## Выводы по прототипам
 
-## Canvas (React Flow)
+## Канва (React Flow)
 
-- Custom node rendering works and supports domain-shaped node payloads.
-- Relation edges and viewport controls are straightforward in the current stack.
-- Conclusion: keep `reactflow` for S-2/S-3 as the base for canvas exploration.
+- Кастомный рендеринг узлов работает и поддерживает полезную доменную нагрузку.
+- Рёбра связей и управление viewport в текущем стеке реализуются без лишней сложности.
+- Вывод: `reactflow` подходит как базовая библиотека для этапов `S-2` и `S-3`.
 
-## Table (TanStack Table + Virtual)
+## Таблица (TanStack Table + Virtual)
 
-- Virtualized rendering works for larger row sets and keeps DOM/render cost bounded.
-- Column + row model ergonomics are sufficient for early saved-view/table work.
-- Conclusion: keep `@tanstack/react-table` + `@tanstack/react-virtual`.
+- Виртуализация нормально работает на больших наборах строк и ограничивает стоимость DOM/render.
+- Эргономики column model и row model достаточно для ранней работы с сохранёнными представлениями и таблицами.
+- Вывод: оставляем `@tanstack/react-table` и `@tanstack/react-virtual`.
 
-## Editor (Tiptap)
+## Редактор (Tiptap)
 
-- Basic rich text flow is stable.
-- Entity references can be represented with lightweight tokens (`[[entity:...]]`) during research.
-- Conclusion: keep Tiptap for document layer evolution.
+- Базовый поток работы с rich text стабилен.
+- Ссылки на сущности можно представлять лёгкими токенами вида `[[entity:...]]` на этапе исследования.
+- Вывод: Tiptap подходит для дальнейшего развития документного слоя.
 
-## Collaboration (Yjs + Hocuspocus)
+## Совместная работа (Yjs + Hocuspocus)
 
-- Minimal server is stable and logs document lifecycle hooks.
-- Health checks and startup/shutdown behavior are predictable.
-- Conclusion: keep `@hocuspocus/server` + `yjs` for realtime document path.
+- Минимальный сервер стабилен и логирует хуки жизненного цикла документа.
+- Health-check и поведение при старте/остановке предсказуемы.
+- Вывод: `@hocuspocus/server` и `yjs` подходят для realtime-направления документов.
 
 ## API + PostgreSQL
 
-- Nest minimal API works with a simple health layer.
-- PostgreSQL connectivity is validated via runtime health probe.
-- Dockerized Postgres and API startup on Docker Desktop is straightforward.
-- Conclusion: keep Nest + PostgreSQL path for S-2 backend skeleton.
+- Минимальный Nest API работает корректно с простым слоем health-check.
+- Подключение к PostgreSQL подтверждено runtime-проверкой.
+- Запуск Postgres и API в Docker Desktop прямолинеен.
+- Вывод: связка Nest + PostgreSQL подходит для backend-скелета этапа `S-2`.
 
-## Exit Criteria Answers (S-1)
+## Ответы на exit criteria для `S-1`
 
-- How to store entities: relational table model + typed shape in `packages/types`.
-- How to store relations: explicit relation records linking entity IDs.
-- How to store canvas layout: separate canvas layout model (`CanvasNodeLayout`, `CanvasEdgeLayout`, `CanvasViewport`) decoupled from entity source of truth.
-- How document references entities: textual entity tokens + structured document reference model in shared types.
-- How frontend/backend share types: workspace packages `@ryba/types` and `@ryba/schemas`, consumed by both `web` and `api`.
-- Libraries that stay:
+- Хранение сущностей: реляционная модель таблиц + типизированная форма в `packages/types`.
+- Хранение связей: явные записи relations со ссылками на entity ID.
+- Хранение макета канвы: отдельная модель layout (`CanvasNodeLayout`, `CanvasEdgeLayout`, `CanvasViewport`), отделённая от source of truth сущностей.
+- Ссылки документа на сущности: текстовые токены сущностей + структурированная модель document reference в общих типах.
+- Обмен типами между frontend и backend: workspace-пакеты `@ryba/types` и `@ryba/schemas`, которые используют и `web`, и `api`.
+- Библиотеки, которые остаются:
   - `reactflow`
   - `@tanstack/react-table`
   - `@tanstack/react-virtual`
   - `@tiptap/react` + `@tiptap/starter-kit`
   - `@hocuspocus/server` + `yjs`
   - `@nestjs/*` + `pg`
-- Libraries to replace now: none identified at this stage.
+- Библиотеки, которые сейчас нужно заменить: на этом этапе не выявлены.
 
-## Out-of-Scope Confirmed
+## Подтверждённый out of scope
 
-Not implemented in S-1:
+В `S-1` не реализовывались:
 
-- auth system
-- permissions
-- CRM feature layer
-- production UI polish
+- система аутентификации;
+- permissions;
+- CRM-слой;
+- production-polish интерфейса.

@@ -77,13 +77,17 @@ textarea {
 
 .s3-hero,
 .panel,
-.canvas-toolbar,
-.canvas-shell,
-.canvas-node {
+.canvas-toolbar {
   border: 1px solid var(--line);
   background: var(--panel);
   box-shadow: var(--shadow);
   backdrop-filter: blur(14px);
+}
+
+.canvas-shell,
+.canvas-node {
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
 }
 
 .s3-hero {
@@ -346,6 +350,9 @@ textarea {
   min-height: 760px;
   border-radius: 28px;
   overflow: hidden;
+  background:
+    radial-gradient(circle at top, rgba(56, 189, 248, 0.06), transparent 42%),
+    linear-gradient(180deg, rgba(9, 15, 28, 0.98), rgba(6, 11, 21, 0.98));
 }
 
 .canvas-empty {

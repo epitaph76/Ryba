@@ -1,42 +1,42 @@
-# S-3 Base Canvas Implementation Notes
+# S-3. Заметки по реализации базовой канвы
 
-Date: `2026-04-01`
+Дата: `2026-04-01`
 
-## Scope
+## Область работы
 
-This note records the delivered implementation of `S-3` from `PROJECT_STATUS.md`:
+Этот документ фиксирует реализованный этап `S-3` из `PROJECT_STATUS.md`:
 
-- real canvas view on top of `spaces`, `entities`, and `relations`;
-- separate persistence for canvas layout, independent from domain source of truth;
-- minimal canvas-focused web workflow for creating entities and relations;
-- canvas API contracts, shared types, and automated checks.
+- реальное представление канвы поверх `spaces`, `entities` и `relations`;
+- отдельное сохранение layout канвы, независимое от domain source of truth;
+- минимальный web-сценарий для создания сущностей и связей прямо с канвы;
+- API-контракты канвы, общие типы и автоматические проверки.
 
-Out of scope for `S-3`:
+Что не входило в `S-3`:
 
-- entity schema designer and typed field system (`S-4`);
-- document layer, tables, saved views, and external data;
-- realtime canvas collaboration;
-- advanced auto-layout or whiteboard functionality.
+- дизайнер схем сущностей и типизированная система полей (`S-4`);
+- документный слой, таблицы, saved views и внешние данные;
+- realtime-совместная работа на канве;
+- продвинутая auto-layout или whiteboard-функциональность.
 
-## Delivered Architecture
+## Реализованная архитектура
 
-### API and persistence
+### API и хранение
 
-- Added `space_canvas_states` table in PostgreSQL.
-- Added `CanvasModule` in `apps/api`.
-- Added endpoints:
+- В PostgreSQL добавлена таблица `space_canvas_states`.
+- В `apps/api` добавлен `CanvasModule`.
+- Добавлены эндпоинты:
   - `GET /spaces/:spaceId/canvas`
   - `PUT /spaces/:spaceId/canvas`
-- Canvas layout is stored separately from `entities` and `relations`.
-- `GET /spaces/:spaceId/canvas` returns a usable default state even when no saved layout exists yet.
-- `PUT /spaces/:spaceId/canvas` validates:
-  - every node references an existing entity in the same space;
-  - every edge references an existing relation in the same space;
-  - edge endpoints match the relation source/target pair.
+- Макет канвы хранится отдельно от `entities` и `relations`.
+- `GET /spaces/:spaceId/canvas` возвращает пригодное состояние по умолчанию, даже если layout ещё не сохранялся.
+- `PUT /spaces/:spaceId/canvas` валидирует:
+  - что каждый узел ссылается на существующую сущность в том же space;
+  - что каждое ребро ссылается на существующую relation в том же space;
+  - что концы ребра совпадают с source/target соответствующей relation.
 
-### Shared contracts
+### Общие контракты
 
-Added/expanded shared canvas contracts in `@ryba/types` and `@ryba/schemas`:
+В `@ryba/types` и `@ryba/schemas` были добавлены и расширены контракты канвы:
 
 - `CanvasLayout`
 - `CanvasStateInput`
@@ -46,12 +46,12 @@ Added/expanded shared canvas contracts in `@ryba/types` and `@ryba/schemas`:
 - `canvasStateRecordSchema`
 - `saveCanvasStateRequestSchema`
 
-The agreed S-3 contract is:
+Согласованный контракт `S-3` выглядит так:
 
 - `GET /spaces/:spaceId/canvas -> CanvasStateRecord`
 - `PUT /spaces/:spaceId/canvas -> CanvasStateRecord`
 
-Where `CanvasStateRecord` contains:
+Где `CanvasStateRecord` содержит:
 
 - `spaceId`
 - `nodes`
@@ -59,36 +59,36 @@ Where `CanvasStateRecord` contains:
 - `viewport`
 - `updatedAt`
 
-### Web canvas
+### Веб-канва
 
-`apps/web` now exposes a working S-3 screen instead of the isolated prototype harness.
+`apps/web` теперь показывает рабочий экран `S-3` вместо изолированного prototype harness.
 
-Implemented capabilities:
+Реализованные возможности:
 
-- auth flow using the real API;
-- workspace and space selection;
-- loading real entities, relations, and canvas layout;
-- rendering entity cards as React Flow nodes;
-- rendering relations as graph edges;
-- drag/drop, zoom, pan, and selection;
-- double-click on the canvas to create an entity;
-- connect handles to create a relation;
-- manual layout save through the canvas API;
-- minimal entity inspector panel.
+- аутентификация через реальный API;
+- выбор workspace и space;
+- загрузка реальных entities, relations и layout канвы;
+- рендер карточек сущностей как узлов React Flow;
+- рендер связей как рёбер графа;
+- drag/drop, zoom, pan и selection;
+- создание сущности двойным кликом по канве;
+- создание relation через соединение хендлов;
+- ручное сохранение layout через canvas API;
+- минимальная панель инспектора сущности.
 
-### Interaction model
+### Модель взаимодействия
 
-The current S-3 UX deliberately stays minimal:
+Текущий UX этапа `S-3` намеренно остаётся минимальным:
 
-- canvas is a navigation lens, not the source of truth;
-- layout changes are explicit and persistable;
-- entity creation can start from the canvas;
-- relation creation uses direct node-to-node connect interaction;
-- detail view is intentionally shallow and stops before `S-4`.
+- канва является навигационной линзой, а не source of truth;
+- изменения layout сохраняются явно;
+- создание сущностей может начинаться прямо с канвы;
+- relation создаются через прямое соединение node-to-node;
+- detail view намеренно остаётся поверхностным и не заходит в `S-4`.
 
-## Testing and Validation
+## Тестирование и валидация
 
-### Automated checks run
+### Запущенные автоматические проверки
 
 - `corepack pnpm db:migrate`
 - `corepack pnpm --filter @ryba/web typecheck`
@@ -100,74 +100,74 @@ The current S-3 UX deliberately stays minimal:
 - `corepack pnpm test`
 - `corepack pnpm typecheck`
 
-Note: local runs emitted an engine warning because the current machine used Node `24.x`, while the repo declares `>=22 <23`. The checks above still completed successfully.
+Примечание: локальные прогоны показывали warning по engine, потому что на машине использовался Node `24.x`, а в репозитории заявлено `>=22 <23`. Несмотря на это, все проверки завершились успешно.
 
-### API integration tests
+### Интеграционные тесты API
 
-`apps/api/test/s3.integration.test.ts` covers:
+`apps/api/test/s3.integration.test.ts` покрывает:
 
-1. default canvas state generation from real entities and relations;
-2. save/load roundtrip for `PUT/GET /spaces/:spaceId/canvas`;
-3. workspace isolation for canvas access.
+1. генерацию состояния канвы по умолчанию из реальных entities и relations;
+2. roundtrip сохранения и загрузки для `PUT/GET /spaces/:spaceId/canvas`;
+3. изоляцию доступа к канве между разными workspace.
 
-`apps/api/test/s2.integration.test.ts` remains green alongside S-3.
+`apps/api/test/s2.integration.test.ts` также остаётся зелёным вместе с `S-3`.
 
-### Web unit tests
+### Unit-тесты веба
 
-`apps/web/src/canvas-model.test.ts` covers:
+`apps/web/src/canvas-model.test.ts` покрывает:
 
-1. mapping API entities/relations/canvas state into React Flow graph data;
-2. serializing the current graph back into the API canvas payload.
+1. преобразование entities / relations / состояния канвы из API в структуру данных React Flow;
+2. сериализацию текущего графа обратно в payload канвы для API.
 
-## How to Run and Verify Locally
+## Как запустить и проверить локально
 
-1. Install dependencies:
+1. Установить зависимости:
 
 ```bash
 corepack pnpm install
 ```
 
-2. Prepare env:
+2. Подготовить env:
 
 ```bash
 copy .env.example .env
 ```
 
-3. Start PostgreSQL:
+3. Поднять PostgreSQL:
 
 ```bash
 docker compose up -d postgres
 ```
 
-4. Apply migrations:
+4. Применить миграции:
 
 ```bash
 corepack pnpm db:migrate
 ```
 
-5. Start API:
+5. Запустить API:
 
 ```bash
 corepack pnpm --filter @ryba/api dev
 ```
 
-6. Start web:
+6. Запустить web:
 
 ```bash
 corepack pnpm --filter @ryba/web dev
 ```
 
-7. Verify manually:
+7. Проверить вручную:
 
-- open `http://localhost:5173`
-- register or log in;
-- create workspace and space;
-- open the canvas;
-- double-click the canvas to create entities;
-- connect nodes to create a relation;
-- drag nodes and save layout;
-- refresh the canvas and verify the layout is restored.
+- открыть `http://localhost:5173`;
+- зарегистрироваться или войти;
+- создать workspace и space;
+- открыть канву;
+- двойным кликом по канве создать сущности;
+- соединить узлы, чтобы создать relation;
+- перетащить узлы и сохранить layout;
+- обновить канву и убедиться, что макет восстановился.
 
-## Next Step
+## Следующий шаг
 
-After `S-3`, the correct next phase is `S-4`: entity detail and schema layer on top of the now-working canvas navigation model.
+После `S-3` правильный следующий этап: `S-4`, то есть слой деталей сущности и схемы поверх уже работающей навигационной модели канвы.
