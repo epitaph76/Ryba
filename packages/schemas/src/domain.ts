@@ -384,3 +384,67 @@ export const documentBlockSchema = z.object({
   text: z.string().nullable(),
   entityReferences: z.array(documentEntityReferenceSchema),
 });
+
+export const documentRecordSchema = z.object({
+  id: idSchema,
+  workspaceId: idSchema,
+  spaceId: idSchema,
+  title: z.string().trim().min(1).max(200),
+  body: z.array(documentBlockSchema),
+  previewText: z.string().max(4000),
+  createdByUserId: idSchema,
+  updatedByUserId: idSchema,
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+});
+
+export const documentEntityPreviewSchema = z.object({
+  entityId: idSchema,
+  label: z.string().nullable(),
+  anchorId: z.string().nullable(),
+  title: z.string().trim().min(1).max(200),
+  summary: z.string().max(4000).nullable(),
+  entityTypeId: idSchema.nullable(),
+});
+
+export const documentDetailRecordSchema = z.object({
+  document: documentRecordSchema,
+  mentions: z.array(documentEntityReferenceSchema),
+  mentionedEntities: z.array(documentEntityPreviewSchema),
+});
+
+export const documentBacklinkRecordSchema = z.object({
+  entityId: idSchema,
+  documentId: idSchema,
+  documentTitle: z.string().trim().min(1).max(200),
+  label: z.string().nullable(),
+  anchorId: z.string().nullable(),
+  previewText: z.string().max(4000),
+  updatedAt: z.string().min(1),
+});
+
+export const createDocumentRequestSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  body: z.array(documentBlockSchema).default([]),
+});
+
+export const updateDocumentRequestSchema = z
+  .object({
+    title: z.string().trim().min(1).max(200).optional(),
+    body: z.array(documentBlockSchema).optional(),
+  })
+  .refine((value) => value.title !== undefined || value.body !== undefined, {
+    message: 'At least one field must be provided',
+  });
+
+export const documentIdParamsSchema = z.object({
+  documentId: idSchema,
+});
+
+export const listDocumentsResponseSchema = z.object({
+  items: z.array(documentRecordSchema),
+});
+
+export const listDocumentBacklinksResponseSchema = z.object({
+  items: z.array(documentBacklinkRecordSchema),
+});

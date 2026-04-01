@@ -55,7 +55,7 @@
 | S-2 | Core domain и backend-скелет | `done` | Реализованы core domain API, JWT auth, PostgreSQL schema, миграции и e2e-проверки |
 | S-3 | Базовая канва | `done` | Реализована рабочая canvas-линза поверх реальных entities и relations с persistence layout и автотестами |
 | S-4 | Entity detail и schema layer | `done` | Введены entity types, field definitions, валидация значений и завершённый detail/schema слой с backend, web и тестовой интеграцией |
-| S-5 | Documents и narrative layer | `planned` | Должен появиться документный слой с entity references |
+| S-5 | Documents и narrative layer | `done` | Реализован документный слой с persisted rich text, entity mentions, backlinks и narrative-контекстом |
 | S-6 | Tables и saved views | `planned` | Должны появиться структурированные рабочие представления |
 | S-7 | Groups как subspaces | `planned` | Должна появиться ключевая фича подпространств |
 | S-8 | Permissions и activity | `planned` | Должна появиться базовая многопользовательская пригодность |
@@ -66,7 +66,7 @@
 
 ## Текущее состояние на сейчас
 
-На текущий момент завершены пять шагов: стартовый инфраструктурный bootstrap (S-0), техническая разведка (S-1), core domain + backend skeleton (S-2), базовая канва поверх реальных данных (S-3) и entity detail + schema layer (S-4).
+На текущий момент завершены шесть шагов: стартовый инфраструктурный bootstrap (S-0), техническая разведка (S-1), core domain + backend skeleton (S-2), базовая канва поверх реальных данных (S-3), entity detail + schema layer (S-4) и documents + narrative layer (S-5).
 
 ### Что уже сделано
 
@@ -104,10 +104,15 @@
 - в `apps/api` добавлены seed-наборы типовых сущностей для нового workspace, CRUD для entity types и runtime-валидация значений полей по schema;
 - в `apps/web` подготовлены pure model/helpers для detail view и schema editor, а также API-клиент для entity type / entity update сценариев;
 - добавлены S-4 integration и model-level автотесты для backend и web;
+- в PostgreSQL добавлены `documents` и `document_entity_mentions` для хранения narrative-слоя и ссылок на сущности;
+- в `apps/api` добавлен `DocumentsModule` с REST-эндпоинтами для списка, чтения, создания и обновления документов, а также для `document-backlinks` на уровне entity;
+- в `apps/web` поверх основного экрана встроен document view на Tiptap с persisted rich text, вставкой entity mentions, linked entity previews и списком backlinks для выбранной сущности;
+- сериализация документа и mention extraction вынесены в отдельный model-слой, а S-5 покрыт backend integration и web unit-тестами;
+- добавлен `docs/S5_DOCUMENTS_NARRATIVE_LAYER_IMPLEMENTATION.md` с фиксацией реализации этапа.
 
 ### Что это означает
 
-Это означает, что репозиторий уже содержит не только core-доменную базу, но и несколько рабочих слоёв поверх неё: канва больше не является демкой, а над предметной моделью уже оформлен типизированный S-4 слой.
+Это означает, что репозиторий уже содержит не только core-доменную базу, но и несколько рабочих слоёв поверх неё: канва больше не является демкой, типизированный S-4 слой уже оформлен, а поверх сущностей появился рабочий narrative/document слой.
 
 ### Что это ещё не означает
 
@@ -120,10 +125,10 @@
 - групп как subspaces;
 - permission model;
 - production-grade collaboration layer;
-- документов, таблиц, groups/subspaces и permission model как рабочих продуктовых слоёв.
+- tables/saved views, groups/subspaces и permission model как завершённых рабочих продуктовых слоёв.
 
 То есть продукт как система ещё не построен.
-Построены стартовый каркас, технические прототипы, рабочее S-2 доменное ядро, базовая S-3 канва и завершённый S-4 слой типов сущностей и полей.
+Построены стартовый каркас, технические прототипы, рабочее S-2 доменное ядро, базовая S-3 канва, завершённый S-4 слой типов сущностей и полей, а также S-5 документный слой с narrative-контекстом вокруг сущностей.
 
 ---
 
@@ -579,7 +584,7 @@
 
 ## S-5. Documents и Narrative Layer
 
-**Статус:** `planned`
+**Статус:** `done`
 
 ### Цель
 
@@ -617,6 +622,14 @@
 - entity mentions;
 - backlinks;
 - preview-механизм для связанного объекта.
+
+### Что уже закрыто в рамках этапа
+
+- document layer встроен в основной web-screen и живёт в одном рабочем контексте с канвой и detail view;
+- `apps/api` хранит документы отдельно от entities, но валидирует mentions относительно сущностей того же workspace/space;
+- `apps/web` использует Tiptap как editor-слой, а сериализацию документа и extraction mentions держит в отдельном pure model;
+- backlinks доступны от выбранной сущности, а linked entity previews доступны прямо из документа;
+- этап покрыт `apps/api/test/s5.integration.test.ts` и `apps/web/src/document-model.test.ts`.
 
 ### Как понять, что этап завершён
 

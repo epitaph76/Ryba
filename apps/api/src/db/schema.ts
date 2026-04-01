@@ -228,6 +228,71 @@ export const entities = pgTable(
   }),
 );
 
+export const documents = pgTable(
+  'documents',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    spaceId: text('space_id')
+      .notNull()
+      .references(() => spaces.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    body: jsonb('body').notNull().default(sql`'[]'::jsonb`),
+    previewText: text('preview_text').notNull().default(''),
+    createdByUserId: text('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    updatedByUserId: text('updated_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { mode: 'string', withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { mode: 'string', withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    workspaceIdx: index('documents_workspace_idx').on(table.workspaceId),
+    spaceIdx: index('documents_space_idx').on(table.spaceId),
+  }),
+);
+
+export const documentEntityMentions = pgTable(
+  'document_entity_mentions',
+  {
+    id: text('id').primaryKey(),
+    documentId: text('document_id')
+      .notNull()
+      .references(() => documents.id, { onDelete: 'cascade' }),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    spaceId: text('space_id')
+      .notNull()
+      .references(() => spaces.id, { onDelete: 'cascade' }),
+    entityId: text('entity_id')
+      .notNull()
+      .references(() => entities.id, { onDelete: 'cascade' }),
+    blockId: text('block_id').notNull(),
+    label: text('label'),
+    anchorId: text('anchor_id'),
+    createdAt: timestamp('created_at', { mode: 'string', withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { mode: 'string', withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    documentIdx: index('document_entity_mentions_document_idx').on(table.documentId),
+    entityIdx: index('document_entity_mentions_entity_idx').on(table.entityId),
+    spaceIdx: index('document_entity_mentions_space_idx').on(table.spaceId),
+  }),
+);
+
 export const relations = pgTable(
   'relations',
   {

@@ -1,6 +1,9 @@
-import { canvasLayoutSchema } from '@ryba/schemas';
+import { canvasLayoutSchema, documentBlockSchema } from '@ryba/schemas';
 import type {
   CanvasStateRecord,
+  DocumentBacklinkRecord,
+  DocumentEntityPreview,
+  DocumentRecord,
   EntityRecord,
   EntityTypeFieldRecord,
   EntityTypeRecord,
@@ -17,6 +20,8 @@ import type {
   entityTypeFields,
   entityTypes,
   relations,
+  documentEntityMentions,
+  documents,
   spaceCanvasStates,
   spaces,
   users,
@@ -32,6 +37,8 @@ type EntityRow = typeof entities.$inferSelect;
 type EntityTypeRow = typeof entityTypes.$inferSelect;
 type EntityTypeFieldRow = typeof entityTypeFields.$inferSelect;
 type RelationRow = typeof relations.$inferSelect;
+type DocumentRow = typeof documents.$inferSelect;
+type DocumentEntityMentionRow = typeof documentEntityMentions.$inferSelect;
 type SpaceCanvasStateRow = typeof spaceCanvasStates.$inferSelect;
 
 const ensureJsonObject = (value: unknown): JsonObject => {
@@ -138,6 +145,44 @@ export const toRelationRecord = (row: RelationRow): RelationRecord => ({
   updatedByUserId: row.updatedByUserId,
   createdAt: row.createdAt,
   updatedAt: row.updatedAt,
+});
+
+export const toDocumentRecord = (row: DocumentRow): DocumentRecord => ({
+  id: row.id,
+  workspaceId: row.workspaceId,
+  spaceId: row.spaceId,
+  title: row.title,
+  body: documentBlockSchema.array().parse(row.body),
+  previewText: row.previewText,
+  createdByUserId: row.createdByUserId,
+  updatedByUserId: row.updatedByUserId,
+  createdAt: row.createdAt,
+  updatedAt: row.updatedAt,
+});
+
+export const toDocumentEntityPreview = (
+  mention: Pick<DocumentEntityMentionRow, 'entityId' | 'label' | 'anchorId'>,
+  entity: Pick<EntityRecord, 'title' | 'summary' | 'entityTypeId'>,
+): DocumentEntityPreview => ({
+  entityId: mention.entityId,
+  label: mention.label,
+  anchorId: mention.anchorId,
+  title: entity.title,
+  summary: entity.summary,
+  entityTypeId: entity.entityTypeId,
+});
+
+export const toDocumentBacklinkRecord = (
+  mention: Pick<DocumentEntityMentionRow, 'entityId' | 'label' | 'anchorId'>,
+  document: Pick<DocumentRecord, 'id' | 'title' | 'previewText' | 'updatedAt'>,
+): DocumentBacklinkRecord => ({
+  entityId: mention.entityId,
+  documentId: document.id,
+  documentTitle: document.title,
+  label: mention.label,
+  anchorId: mention.anchorId,
+  previewText: document.previewText,
+  updatedAt: document.updatedAt,
 });
 
 export const toCanvasStateRecord = (row: SpaceCanvasStateRow): CanvasStateRecord => {

@@ -20,6 +20,9 @@ import type {
   AuthSession,
   CanvasEdgeLayout,
   CanvasStateRecord,
+  DocumentBacklinkRecord,
+  DocumentDetailRecord,
+  DocumentRecord,
   EntityRecord,
   EntityTypeFieldRecord,
   EntityTypeRecord,
@@ -49,6 +52,14 @@ import {
   type EntityDetailDraft,
   type EntityTypeDraft,
 } from './entity-detail-model';
+import { DocumentComposer } from './document-composer';
+import {
+  buildDocumentDraft,
+  createEmptyDocumentDraft,
+  findMentionedEntities,
+  serializeDocumentDraft,
+  type DocumentDraft,
+} from './document-model';
 import { getFieldOptions, type FieldEditorValue } from './field-renderers';
 
 const TOKEN_STORAGE_KEY = 'ryba_s3_access_token';
@@ -125,9 +136,16 @@ export function App() {
   const [logLines, setLogLines] = useState<string[]>([]);
   const [entitySaveBusy, setEntitySaveBusy] = useState(false);
   const [schemaSaveBusy, setSchemaSaveBusy] = useState(false);
+  const [documentSaveBusy, setDocumentSaveBusy] = useState(false);
+  const [documentLoading, setDocumentLoading] = useState(false);
   const [entityDetailDraft, setEntityDetailDraft] = useState<EntityDetailDraft | null>(null);
   const [activeSchemaTypeId, setActiveSchemaTypeId] = useState('');
   const [entityTypeDraft, setEntityTypeDraft] = useState<EntityTypeDraft>(createEmptyEntityTypeDraft());
+  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
+  const [documentDetail, setDocumentDetail] = useState<DocumentDetailRecord | null>(null);
+  const [documentDraft, setDocumentDraft] = useState<DocumentDraft>(createEmptyDocumentDraft());
+  const [documentBacklinks, setDocumentBacklinks] = useState<DocumentBacklinkRecord[]>([]);
 
   const [email, setEmail] = useState('demo@ryba.local');
   const [password, setPassword] = useState('Password123');
@@ -143,8 +161,23 @@ export function App() {
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null;
   const selectedSpace = spaces.find((space) => space.id === selectedSpaceId) ?? null;
   const selectedEntity = entities.find((entity) => entity.id === selectedEntityId) ?? null;
+  const selectedDocument = documents.find((document) => document.id === selectedDocumentId) ?? null;
   const selectedEntityType = getEntityTypeById(entityTypes, entityDetailDraft?.entityTypeId);
   const activeSchemaType = getEntityTypeById(entityTypes, activeSchemaTypeId || null);
+  const mentionedEntities = useMemo(() => {
+    if (documentDetail) {
+      return documentDetail.mentionedEntities;
+    }
+
+    return findMentionedEntities(documentDraft.body, entities).map((entity) => ({
+      entityId: entity.id,
+      label: entity.title,
+      anchorId: null,
+      title: entity.title,
+      summary: entity.summary,
+      entityTypeId: entity.entityTypeId,
+    }));
+  }, [documentDetail, documentDraft.body, entities]);
 
   const relatedToSelectedEntity = useMemo(() => {
     if (!selectedEntity) {
@@ -179,6 +212,7 @@ export function App() {
     setEntities([]);
     setEntityTypes([]);
     setRelations([]);
+    setDocuments([]);
     setNodes([]);
     setEdges([]);
     setEdgeLayouts([]);
@@ -186,9 +220,13 @@ export function App() {
     setSelectedWorkspaceId('');
     setSelectedSpaceId('');
     setSelectedEntityId(null);
+    setSelectedDocumentId(null);
     setActiveSchemaTypeId('');
     setEntityTypeDraft(createEmptyEntityTypeDraft());
     setEntityDetailDraft(null);
+    setDocumentDetail(null);
+    setDocumentDraft(createEmptyDocumentDraft());
+    setDocumentBacklinks([]);
     setCanvasError(null);
     setLayoutDirty(false);
     appendLog('Сессия очищена');
@@ -261,6 +299,30 @@ export function App() {
 
     if (!response.items.some((space) => space.id === selectedSpaceId)) {
       setSelectedSpaceId(response.items[0]?.id ?? '');
+    }
+  };
+
+  const loadDocuments = async (activeToken: string, spaceId: string) => {
+    const response = await canvasApi.listDocuments(activeToken, spaceId);
+    setDocuments(response.items);
+    setSelectedDocumentId((current) => {
+      if (current && response.items.some((document) => document.id === current)) {
+        return current;
+      }
+
+      return response.items[0]?.id ?? null;
+    });
+  };
+
+  const loadDocumentDetail = async (activeToken: string, documentId: string) => {
+    setDocumentLoading(true);
+
+    try {
+      const detail = await canvasApi.getDocument(activeToken, documentId);
+      setDocumentDetail(detail);
+      setDocumentDraft(buildDocumentDraft(detail.document));
+    } finally {
+      setDocumentLoading(false);
     }
   };
 
@@ -396,11 +458,25 @@ export function App() {
 
   useEffect(() => {
     if (!token || !selectedSpaceId) {
+      setDocuments([]);
+      setSelectedDocumentId(null);
+      setDocumentDetail(null);
+      setDocumentDraft(createEmptyDocumentDraft());
       return;
     }
 
-    void loadCanvas(token, selectedSpaceId);
+    void Promise.all([loadCanvas(token, selectedSpaceId), loadDocuments(token, selectedSpaceId)]);
   }, [selectedSpaceId, token]);
+
+  useEffect(() => {
+    if (!token || !selectedDocumentId) {
+      setDocumentDetail(null);
+      setDocumentDraft(createEmptyDocumentDraft());
+      return;
+    }
+
+    void loadDocumentDetail(token, selectedDocumentId);
+  }, [selectedDocumentId, token]);
 
   useEffect(() => {
     if (!flowInstance || !canvasState) {
@@ -419,6 +495,22 @@ export function App() {
   useEffect(() => {
     setEntityDetailDraft(buildEntityDetailDraft(selectedEntity, entityTypes));
   }, [entityTypes, selectedEntity]);
+
+  useEffect(() => {
+    if (!token || !selectedEntityId) {
+      setDocumentBacklinks([]);
+      return;
+    }
+
+    void canvasApi
+      .listDocumentBacklinks(token, selectedEntityId)
+      .then((response) => setDocumentBacklinks(response.items))
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : 'Не удалось загрузить backlinks';
+        appendLog(message);
+        setDocumentBacklinks([]);
+      });
+  }, [selectedEntityId, token]);
 
   useEffect(() => {
     setEntityTypeDraft(buildEntityTypeDraft(activeSchemaType));
@@ -618,6 +710,45 @@ export function App() {
       }
     });
 
+  const startNewDocument = () => {
+    setSelectedDocumentId(null);
+    setDocumentDetail(null);
+    setDocumentDraft(createEmptyDocumentDraft());
+  };
+
+  const saveDocument = () =>
+    withAction('Сохранение документа', async () => {
+      if (!token || !selectedSpaceId) {
+        return;
+      }
+
+      const payload = serializeDocumentDraft(documentDraft);
+
+      if (!payload.title) {
+        throw new Error('Document title is required');
+      }
+
+      setDocumentSaveBusy(true);
+
+      try {
+        const detail = selectedDocumentId
+          ? await canvasApi.updateDocument(token, selectedDocumentId, payload)
+          : await canvasApi.createDocument(token, selectedSpaceId, payload);
+
+        setDocumentDetail(detail);
+        setDocumentDraft(buildDocumentDraft(detail.document));
+        setSelectedDocumentId(detail.document.id);
+        appendLog(
+          selectedDocumentId
+            ? `Документ обновлён: ${detail.document.title}`
+            : `Документ создан: ${detail.document.title}`,
+        );
+        await loadDocuments(token, selectedSpaceId);
+      } finally {
+        setDocumentSaveBusy(false);
+      }
+    });
+
   const startNewEntityType = () => {
     setActiveSchemaTypeId('');
     setEntityTypeDraft(createEmptyEntityTypeDraft());
@@ -788,12 +919,12 @@ export function App() {
     <main className="s3-app">
       <header className="s3-hero">
         <div className="s3-hero__copy">
-          <span className="eyebrow">Ryba S-4 detail and schema layer</span>
-          <h1>Живая канва поверх ядра данных</h1>
+          <span className="eyebrow">Ryba S-5 documents and narrative layer</span>
+          <h1>Канва, записи и narrative в одном рабочем слое</h1>
           <p>
-            Это первый рабочий визуальный слой поверх реальных сущностей и связей.
-            Дважды кликни по канве, чтобы создать узел, перетаскивай карточки для настройки
-            макета и соединяй хендлы, чтобы создавать связи.
+            Теперь поверх сущностей и связей появился документный слой. Канва остаётся точкой
+            навигации, detail view управляет structured data, а документы связывают это с rich
+            text, mentions и backlinks.
           </p>
         </div>
         <div className="s3-hero__stats">
@@ -810,10 +941,8 @@ export function App() {
             <strong>{layoutDirty ? 'не сохранён' : canvasState?.updatedAt ? 'сохранён' : 'по умолчанию'}</strong>
           </div>
           <div>
-            <span>Записи</span>
-            <strong>
-              {entities.length} / {relations.length}
-            </strong>
+            <span>Записи / документы</span>
+            <strong>{entities.length} / {documents.length}</strong>
           </div>
         </div>
       </header>
@@ -1190,6 +1319,109 @@ export function App() {
 
           <section className="panel">
             <div className="panel__header">
+              <h2>Documents</h2>
+              <span>{selectedDocument ? selectedDocument.title : `${documents.length} total`}</span>
+            </div>
+            <div className="document-panel">
+              <div className="document-panel__actions">
+                <button
+                  type="button"
+                  className="button"
+                  disabled={!token || !selectedSpaceId || !!busyLabel}
+                  onClick={startNewDocument}
+                >
+                  Новый документ
+                </button>
+                <button
+                  type="button"
+                  className="button button--ghost"
+                  disabled={!token || !selectedSpaceId || !!busyLabel}
+                  onClick={() =>
+                    token && selectedSpaceId && void withAction('Обновление документов', () => loadDocuments(token, selectedSpaceId))
+                  }
+                >
+                  Обновить
+                </button>
+              </div>
+
+              <div className="document-list">
+                {documents.length === 0 ? (
+                  <p className="panel__hint">
+                    Пока нет документов. Создай первый narrative-слой для текущего пространства.
+                  </p>
+                ) : (
+                  documents.map((document) => (
+                    <button
+                      key={document.id}
+                      type="button"
+                      className={`document-list__item${document.id === selectedDocumentId ? ' is-active' : ''}`}
+                      onClick={() => setSelectedDocumentId(document.id)}
+                    >
+                      <strong>{document.title}</strong>
+                      <span>{document.previewText || 'Пустой документ'}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+
+              <DocumentComposer
+                title={documentDraft.title}
+                body={documentDraft.body}
+                entities={entities}
+                disabled={!token || !selectedSpaceId || !!busyLabel}
+                onTitleChange={(value) =>
+                  setDocumentDraft((current) => ({
+                    ...current,
+                    title: value,
+                  }))
+                }
+                onBodyChange={(value) =>
+                  setDocumentDraft((current) => ({
+                    ...current,
+                    body: value,
+                  }))
+                }
+              />
+
+              <button
+                type="button"
+                className="button button--full"
+                disabled={!token || !selectedSpaceId || !!busyLabel || documentSaveBusy}
+                onClick={saveDocument}
+              >
+                {documentSaveBusy ? 'Saving...' : selectedDocumentId ? 'Save document' : 'Create document'}
+              </button>
+
+              <div className="document-preview-list">
+                <div className="panel__header">
+                  <h2>Linked entities</h2>
+                  <span>{mentionedEntities.length}</span>
+                </div>
+                {documentLoading ? (
+                  <p className="panel__hint">Загружаю документ и его связи...</p>
+                ) : mentionedEntities.length === 0 ? (
+                  <p className="panel__hint">
+                    Вставь mention из тулбара, чтобы документ начал ссылаться на сущности.
+                  </p>
+                ) : (
+                  mentionedEntities.map((item) => (
+                    <button
+                      key={item.entityId}
+                      type="button"
+                      className="entity-preview-card"
+                      onClick={() => setSelectedEntityId(item.entityId)}
+                    >
+                      <strong>{item.title}</strong>
+                      <span>{item.summary ?? item.label ?? 'Без описания'}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          </section>
+
+          <section className="panel">
+            <div className="panel__header">
               <h2>Detail view</h2>
               <span>{selectedEntity ? selectedEntity.title : 'nothing selected'}</span>
             </div>
@@ -1253,6 +1485,29 @@ export function App() {
                 >
                   {entitySaveBusy ? 'Saving...' : 'Save record'}
                 </button>
+                <div className="document-preview-list">
+                  <div className="panel__header">
+                    <h2>Backlinks</h2>
+                    <span>{documentBacklinks.length}</span>
+                  </div>
+                  {documentBacklinks.length === 0 ? (
+                    <p className="panel__hint">
+                      На текущую сущность пока никто не ссылается из документов.
+                    </p>
+                  ) : (
+                    documentBacklinks.map((backlink) => (
+                      <button
+                        key={`${backlink.documentId}-${backlink.anchorId ?? 'root'}`}
+                        type="button"
+                        className="entity-preview-card"
+                        onClick={() => setSelectedDocumentId(backlink.documentId)}
+                      >
+                        <strong>{backlink.documentTitle}</strong>
+                        <span>{backlink.previewText}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
               </div>
             ) : (
               <p className="panel__hint">

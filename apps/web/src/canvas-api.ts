@@ -3,6 +3,9 @@ import type {
   AuthSession,
   CanvasStateInput,
   CanvasStateRecord,
+  DocumentBacklinkRecord,
+  DocumentDetailRecord,
+  DocumentRecord,
   EntityRecord,
   EntityTypeRecord,
   RelationRecord,
@@ -259,6 +262,62 @@ export const canvasApi = {
         method: 'PATCH',
         body: JSON.stringify(input),
       },
+      token,
+    );
+  },
+
+  listDocuments(token: string, spaceId: string) {
+    return request<ListResponse<DocumentRecord>>(
+      `/spaces/${spaceId}/documents`,
+      { method: 'GET' },
+      token,
+    );
+  },
+
+  createDocument(
+    token: string,
+    spaceId: string,
+    input: {
+      title: string;
+      body: DocumentRecord['body'];
+    },
+  ) {
+    return request<DocumentDetailRecord>(
+      `/spaces/${spaceId}/documents`,
+      {
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+      token,
+    );
+  },
+
+  getDocument(token: string, documentId: string) {
+    return request<DocumentDetailRecord>(`/documents/${documentId}`, { method: 'GET' }, token);
+  },
+
+  updateDocument(
+    token: string,
+    documentId: string,
+    input: {
+      title?: string;
+      body?: DocumentRecord['body'];
+    },
+  ) {
+    return request<DocumentDetailRecord>(
+      `/documents/${documentId}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(input),
+      },
+      token,
+    );
+  },
+
+  listDocumentBacklinks(token: string, entityId: string) {
+    return request<ListResponse<DocumentBacklinkRecord>>(
+      `/entities/${entityId}/document-backlinks`,
+      { method: 'GET' },
       token,
     );
   },
