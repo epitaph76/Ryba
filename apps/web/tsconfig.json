@@ -13,12 +13,12 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "forceConsistentCasingInFileNames": true,
-    "types": ["node"],
+    "types": ["node", "vitest/globals"],
     "baseUrl": ".",
     "paths": {
       "@ryba/types": ["../../packages/types/src/index.ts"],
       "@ryba/types/*": ["../../packages/types/src/*"]
     }
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "vite.config.ts", "vitest.config.ts"]
 }

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { AuthModule } from './auth/auth.module';
+import { CanvasModule } from './canvas/canvas.module';
 import { DatabaseModule } from './database.module';
 import { EntitiesModule } from './entities/entities.module';
 import { HealthController } from './health.controller';
@@ -12,6 +13,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
   imports: [
     DatabaseModule,
     AuthModule,
+    CanvasModule,
     WorkspacesModule,
     SpacesModule,
     EntitiesModule,

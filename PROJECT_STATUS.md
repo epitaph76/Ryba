@@ -4,7 +4,7 @@
 
 ## Last Updated
 
-`2026-03-30`
+`2026-04-01`
 
 ## Назначение файла
 
@@ -53,7 +53,7 @@
 | S-0 | Репозиторный bootstrap | `done` | Создан чистый git-репозиторий новой версии, добавлены базовые файлы и стартовая документация |
 | S-1 | Техническая разведка | `done` | Подняты минимальные web/api/collab-прототипы, подтверждён стек и зафиксированы технические выводы |
 | S-2 | Core domain и backend-скелет | `done` | Реализованы core domain API, JWT auth, PostgreSQL schema, миграции и e2e-проверки |
-| S-3 | Базовая канва | `planned` | Должно появиться рабочее canvas-представление сущностей |
+| S-3 | Базовая канва | `done` | Реализована рабочая canvas-линза поверх реальных entities и relations с persistence layout и автотестами |
 | S-4 | Entity detail и schema layer | `planned` | Должны появиться типы сущностей и детальная запись |
 | S-5 | Documents и narrative layer | `planned` | Должен появиться документный слой с entity references |
 | S-6 | Tables и saved views | `planned` | Должны появиться структурированные рабочие представления |
@@ -66,7 +66,7 @@
 
 ## Текущее состояние на сейчас
 
-На текущий момент завершены три шага: стартовый инфраструктурный bootstrap (S-0), техническая разведка (S-1) и core domain + backend skeleton (S-2).
+На текущий момент завершены четыре шага: стартовый инфраструктурный bootstrap (S-0), техническая разведка (S-1), core domain + backend skeleton (S-2) и базовая канва поверх реальных данных (S-3).
 
 ### Что уже сделано
 
@@ -93,10 +93,17 @@
 - добавлен минимальный S-2 экран в `apps/web` для end-to-end сценария;
 - добавлены интеграционные тесты API для полного S-2 flow, валидации и cross-workspace запретов;
 - добавлен `docs/S2_CORE_DOMAIN_IMPLEMENTATION.md` с фиксацией реализации этапа.
+- в PostgreSQL добавлено отдельное space-level хранилище `space_canvas_states` для canvas layout, не смешанное с core source of truth;
+- в `apps/api` добавлены `GET /spaces/:spaceId/canvas` и `PUT /spaces/:spaceId/canvas` с валидацией layout относительно реальных `entities` и `relations`;
+- в `apps/web` прототипный harness заменён на рабочий S-3 экран канвы поверх реального API с drag/drop, zoom/pan, selection, созданием entity из canvas и созданием relation через connect;
+- из node открывается минимальный detail/inspector panel без захода в S-4 schema layer;
+- layout канвы можно читать и сохранять отдельно от доменных данных;
+- добавлены S-3 автотесты для API и unit-тесты для web canvas model;
+- добавлен `docs/S3_BASE_CANVAS_IMPLEMENTATION.md` с фиксацией реализации этапа.
 
 ### Что это означает
 
-Это означает, что репозиторий уже не только стартовая точка и набор прототипов, но и рабочая core-доменная база для перехода к S-3.
+Это означает, что репозиторий уже содержит не только core-доменную базу, но и первую рабочую визуальную линзу поверх неё: канва больше не является демкой и использует реальные `spaces`, `entities`, `relations` и отдельный persistence layer для layout.
 
 ### Что это ещё не означает
 
@@ -108,10 +115,12 @@
 - прикладных пользовательских сценариев;
 - групп как subspaces;
 - permission model;
-- production-grade collaboration layer.
+- production-grade collaboration layer;
+- типизированного entity detail/schema layer уровня S-4;
+- документов, таблиц, groups/subspaces и permission model как рабочих продуктовых слоёв.
 
 То есть продукт как система ещё не построен.
-Построены стартовый каркас, технические прототипы и рабочее S-2 доменное ядро.
+Построены стартовый каркас, технические прототипы, рабочее S-2 доменное ядро и базовая S-3 канва.
 
 ---
 
@@ -371,7 +380,7 @@
 
 ## S-3. Базовая Канва
 
-**Статус:** `planned`
+**Статус:** `done`
 
 ### Цель
 
@@ -441,6 +450,19 @@
 - превращение канвы в источник истины;
 - смешивание visual state и domain state;
 - желание сделать "красивую демку" вместо рабочего представления.
+
+### Фактическое закрытие этапа (2026-04-01)
+
+- `apps/api` получил отдельный canvas-модуль с `GET /spaces/:spaceId/canvas` и `PUT /spaces/:spaceId/canvas`;
+- layout хранится в PostgreSQL в таблице `space_canvas_states` отдельно от `entities` и `relations`;
+- `GET /spaces/:spaceId/canvas` возвращает пригодный к использованию state даже без предварительно сохранённого layout;
+- `PUT /spaces/:spaceId/canvas` валидирует node/edge layout против реальных сущностей и связей пространства;
+- `apps/web` переведён на рабочий S-3 экран канвы поверх реального API вместо изолированного canvas prototype;
+- на канве доступны drag/drop, zoom, pan, selection, создание entity из canvas и создание relation через connect handles;
+- из node открывается минимальный inspector/detail panel с данными entity и её связями;
+- добавлены автотесты:
+  - API integration tests для S-2 и S-3 flow;
+  - web unit tests для canvas graph/model serialization.
 
 ---
 
@@ -1184,11 +1206,11 @@ CRM появился как прикладной сценарий, не разр
 
 Ближайший правильный ход:
 
-1. перейти к S-3 и поднять рабочую канву поверх уже готового S-2 core;
-2. подключить канву к реальным `entities` и `relations`, а не к прототипным данным;
-3. реализовать persistence canvas layout отдельно от source-of-truth сущностей;
-4. сохранить границу между visual state и domain state;
-5. оставить Docker-first workflow и добавить smoke-check S-3 маршрутов.
+1. перейти к S-4 и добавить entity detail + schema layer поверх уже рабочей S-3 канвы;
+2. превратить inspector в полноценную detail view записи, а не только в минимальный side panel;
+3. ввести первые entity types и field types без ухода в переусложнённую метасхему;
+4. сохранить границу между visual state канвы и domain state предметной модели;
+5. оставить Docker-first workflow и расширить smoke/integration coverage для нового S-4 слоя.
 
 ## Главный контрольный вопрос проекта
 

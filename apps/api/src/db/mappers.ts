@@ -1,4 +1,6 @@
+import { canvasLayoutSchema } from '@ryba/schemas';
 import type {
+  CanvasStateRecord,
   EntityRecord,
   JsonObject,
   RelationRecord,
@@ -11,6 +13,7 @@ import type {
 import type {
   entities,
   relations,
+  spaceCanvasStates,
   spaces,
   users,
   workspaceMembers,
@@ -23,6 +26,7 @@ type WorkspaceMemberRow = typeof workspaceMembers.$inferSelect;
 type SpaceRow = typeof spaces.$inferSelect;
 type EntityRow = typeof entities.$inferSelect;
 type RelationRow = typeof relations.$inferSelect;
+type SpaceCanvasStateRow = typeof spaceCanvasStates.$inferSelect;
 
 const ensureJsonObject = (value: unknown): JsonObject => {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
@@ -96,3 +100,15 @@ export const toRelationRecord = (row: RelationRow): RelationRecord => ({
   createdAt: row.createdAt,
   updatedAt: row.updatedAt,
 });
+
+export const toCanvasStateRecord = (row: SpaceCanvasStateRow): CanvasStateRecord => {
+  const layout = canvasLayoutSchema.parse(row.layout);
+
+  return {
+    spaceId: row.spaceId,
+    nodes: layout.nodes,
+    edges: layout.edges,
+    viewport: layout.viewport,
+    updatedAt: row.updatedAt,
+  };
+};

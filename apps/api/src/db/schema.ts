@@ -94,6 +94,32 @@ export const spaces = pgTable(
   }),
 );
 
+export const spaceCanvasStates = pgTable(
+  'space_canvas_states',
+  {
+    spaceId: text('space_id')
+      .primaryKey()
+      .references(() => spaces.id, { onDelete: 'cascade' }),
+    layout: jsonb('layout')
+      .notNull()
+      .default(
+        sql`'{"viewport":{"zoom":1,"offset":{"x":0,"y":0}},"nodes":[],"edges":[]}'::jsonb`,
+      ),
+    createdByUserId: text('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    updatedByUserId: text('updated_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { mode: 'string', withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { mode: 'string', withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+);
+
 export const entities = pgTable(
   'entities',
   {

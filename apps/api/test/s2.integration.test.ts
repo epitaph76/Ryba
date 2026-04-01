@@ -252,7 +252,7 @@ describe('S-2 integration', () => {
     await pool.query(
       [
         'TRUNCATE TABLE',
-        'relations, entities, spaces, workspace_members, workspaces, users',
+        'space_canvas_states, relations, entities, spaces, workspace_members, workspaces, users',
         'RESTART IDENTITY CASCADE',
       ].join(' '),
     );

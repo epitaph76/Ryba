@@ -170,6 +170,9 @@ importers:
       vite:
         specifier: ^5.4.10
         version: 5.4.21(@types/node@22.19.15)
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/node@22.19.15)
 
   packages/schemas:
     dependencies:

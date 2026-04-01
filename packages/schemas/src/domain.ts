@@ -211,6 +211,11 @@ export const canvasSizeSchema = z.object({
   height: z.number(),
 });
 
+export const canvasViewportSchema = z.object({
+  zoom: z.number().positive(),
+  offset: canvasPointSchema,
+});
+
 export const canvasNodeLayoutSchema = z.object({
   entityId: idSchema,
   position: canvasPointSchema,
@@ -224,6 +229,26 @@ export const canvasEdgeLayoutSchema = z.object({
   fromEntityId: idSchema,
   toEntityId: idSchema,
   controlPoints: z.array(canvasPointSchema),
+});
+
+export const canvasLayoutSchema = z.object({
+  nodes: z.array(canvasNodeLayoutSchema),
+  edges: z.array(canvasEdgeLayoutSchema),
+  viewport: canvasViewportSchema,
+});
+
+export const canvasStateRecordSchema = z.object({
+  spaceId: idSchema,
+  nodes: z.array(canvasNodeLayoutSchema),
+  edges: z.array(canvasEdgeLayoutSchema),
+  viewport: canvasViewportSchema,
+  updatedAt: z.string().min(1).nullable(),
+});
+
+export const saveCanvasStateRequestSchema = z.object({
+  nodes: z.array(canvasNodeLayoutSchema),
+  edges: z.array(canvasEdgeLayoutSchema),
+  viewport: canvasViewportSchema,
 });
 
 export const documentEntityReferenceSchema = z.object({
