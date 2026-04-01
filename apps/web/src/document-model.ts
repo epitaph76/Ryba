@@ -28,6 +28,20 @@ export const createEmptyDocumentDraft = (): DocumentDraft => ({
   body: [],
 });
 
+export const buildDocumentDraftForEntity = (
+  entity: Pick<EntityRecord, 'title'> | null,
+  document: Pick<DocumentRecord, 'title' | 'body'> | null,
+): DocumentDraft =>
+  document
+    ? {
+        title: document.title,
+        body: document.body,
+      }
+    : {
+        title: entity?.title ?? '',
+        body: [],
+      };
+
 export const buildDocumentDraft = (
   document: Pick<DocumentRecord, 'title' | 'body'> | null,
 ): DocumentDraft =>
@@ -121,9 +135,13 @@ export const buildEditorHtmlFromBlocks = (blocks: DocumentBlock[]): string => {
 
 export const buildDocumentPreviewText = (blocks: DocumentBlock[]) =>
   blocks
-    .map((block) =>
-      block.text ?? block.entityReferences.map((reference) => reference.label ?? reference.entityId).join(' '),
-    )
+    .map((block) => {
+      if (!block.text) {
+        return block.entityReferences.map((reference) => reference.label ?? reference.entityId).join(' ');
+      }
+
+      return replaceMentionTokens(block.text, block.entityReferences);
+    })
     .join(' ')
     .replace(/\s+/g, ' ')
     .trim()
@@ -174,3 +192,20 @@ const escapeHtml = (value: string) =>
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;');
+
+const replaceMentionTokens = (text: string, references: DocumentEntityReference[]) => {
+  let normalized = text;
+
+  for (const reference of references) {
+    const token = new RegExp(
+      String.raw`\[\[entity:${escapeRegExp(reference.entityId)}(?:\|[^\]]+)?\]\]`,
+      'g',
+    );
+
+    normalized = normalized.replace(token, reference.label ?? reference.entityId);
+  }
+
+  return normalized;
+};
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

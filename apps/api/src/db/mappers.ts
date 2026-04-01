@@ -151,6 +151,7 @@ export const toDocumentRecord = (row: DocumentRow): DocumentRecord => ({
   id: row.id,
   workspaceId: row.workspaceId,
   spaceId: row.spaceId,
+  entityId: row.entityId,
   title: row.title,
   body: documentBlockSchema.array().parse(row.body),
   previewText: row.previewText,
@@ -174,9 +175,10 @@ export const toDocumentEntityPreview = (
 
 export const toDocumentBacklinkRecord = (
   mention: Pick<DocumentEntityMentionRow, 'entityId' | 'label' | 'anchorId'>,
-  document: Pick<DocumentRecord, 'id' | 'title' | 'previewText' | 'updatedAt'>,
+  document: Pick<DocumentRecord, 'id' | 'entityId' | 'title' | 'previewText' | 'updatedAt'>,
 ): DocumentBacklinkRecord => ({
   entityId: mention.entityId,
+  sourceEntityId: document.entityId,
   documentId: document.id,
   documentTitle: document.title,
   label: mention.label,

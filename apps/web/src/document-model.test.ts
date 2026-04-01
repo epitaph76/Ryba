@@ -116,6 +116,6 @@ describe('document-model', () => {
 
     expect(buildEditorHtmlFromBlocks(blocks)).toContain('&lt;plan&gt;');
     expect(buildDocumentPreviewText(blocks)).toContain('Launch');
-    expect(buildDocumentPreviewText(blocks)).toContain('entity:ent-9');
+    expect(buildDocumentPreviewText(blocks)).toContain('Launch task');
   });
 });

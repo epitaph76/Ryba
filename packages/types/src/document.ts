@@ -21,6 +21,7 @@ export interface DocumentRecord {
   id: DocumentId;
   workspaceId: WorkspaceId;
   spaceId: SpaceId;
+  entityId: EntityId;
   title: string;
   body: DocumentBlock[];
   previewText: string;
@@ -41,12 +42,19 @@ export interface DocumentEntityPreview {
 
 export interface DocumentDetailRecord {
   document: DocumentRecord;
+  entity: {
+    id: EntityId;
+    title: string;
+    summary: string | null;
+    entityTypeId: EntityTypeId | null;
+  };
   mentions: DocumentEntityReference[];
   mentionedEntities: DocumentEntityPreview[];
 }
 
 export interface DocumentBacklinkRecord {
   entityId: EntityId;
+  sourceEntityId: EntityId;
   documentId: DocumentId;
   documentTitle: string;
   label: string | null;

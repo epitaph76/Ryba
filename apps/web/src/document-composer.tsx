@@ -33,7 +33,7 @@ export function DocumentComposer({
       StarterKit,
       Placeholder.configure({
         placeholder:
-          'Собери narrative вокруг данных: зафиксируй решение и вставь ссылки на сущности.',
+          'Собери документ вокруг данных: зафиксируй решение и вставь ссылки на сущности.',
       }),
     ],
     content: buildEditorHtmlFromBlocks(body),
@@ -112,7 +112,7 @@ export function DocumentComposer({
           disabled={disabled}
           onClick={() => editor?.chain().focus().toggleBold().run()}
         >
-          Bold
+          Жирный
         </button>
         <button
           type="button"
@@ -120,7 +120,7 @@ export function DocumentComposer({
           disabled={disabled}
           onClick={() => editor?.chain().focus().toggleItalic().run()}
         >
-          Italic
+          Курсив
         </button>
         <button
           type="button"
@@ -128,10 +128,10 @@ export function DocumentComposer({
           disabled={disabled}
           onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}
         >
-          Heading
+          Заголовок
         </button>
         <label className="document-editor__mention-picker">
-          <span>Entity mention</span>
+          <span>Ссылка на сущность</span>
           <select
             value={mentionEntityId}
             disabled={disabled || entities.length === 0}
@@ -151,7 +151,7 @@ export function DocumentComposer({
           disabled={disabled || !canInsertMention}
           onClick={insertMention}
         >
-          Insert mention
+          Вставить ссылку
         </button>
       </div>
 

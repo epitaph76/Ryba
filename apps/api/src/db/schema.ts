@@ -238,6 +238,9 @@ export const documents = pgTable(
     spaceId: text('space_id')
       .notNull()
       .references(() => spaces.id, { onDelete: 'cascade' }),
+    entityId: text('entity_id')
+      .notNull()
+      .references(() => entities.id, { onDelete: 'cascade' }),
     title: text('title').notNull(),
     body: jsonb('body').notNull().default(sql`'[]'::jsonb`),
     previewText: text('preview_text').notNull().default(''),
@@ -257,6 +260,8 @@ export const documents = pgTable(
   (table) => ({
     workspaceIdx: index('documents_workspace_idx').on(table.workspaceId),
     spaceIdx: index('documents_space_idx').on(table.spaceId),
+    entityUnique: unique('documents_entity_unique').on(table.entityId),
+    entityIdx: index('documents_entity_idx').on(table.entityId),
   }),
 );
 

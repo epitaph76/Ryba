@@ -147,6 +147,7 @@ textarea {
 
 .s3-hero__stats > div,
 .meta-grid > div {
+  min-width: 0;
   padding: 16px;
   border-radius: 20px;
   border: 1px solid rgba(148, 163, 184, 0.12);
@@ -157,6 +158,7 @@ textarea {
   display: block;
   margin-top: 6px;
   font-size: 1.05rem;
+  overflow-wrap: anywhere;
 }
 
 .s3-layout {
@@ -182,17 +184,21 @@ textarea {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 14px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .panel__header span {
   font-size: 13px;
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .field {
   display: grid;
   gap: 8px;
   margin-bottom: 12px;
+  min-width: 0;
 }
 
 .field input,
@@ -224,6 +230,7 @@ textarea {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 12px;
+  min-width: 0;
 }
 
 .button {
@@ -450,6 +457,7 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
   padding: 16px 18px;
   border-radius: 22px;
 }
@@ -459,10 +467,24 @@ textarea {
   font-size: 1rem;
 }
 
+.canvas-toolbar__copy {
+  min-width: 0;
+  flex: 1 1 360px;
+}
+
+.canvas-toolbar__copy span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
 .canvas-toolbar__actions {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .status-pill {
@@ -558,11 +580,96 @@ textarea {
   font-size: 13px;
 }
 
-.canvas-node__handle {
-  width: 12px;
-  height: 12px;
-  border: 2px solid rgba(14, 165, 233, 0.9);
-  background: #08111f;
+.document-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+.document-dialog__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(3, 8, 18, 0.72);
+  backdrop-filter: blur(10px);
+}
+
+.document-dialog__panel {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(1380px, calc(100vw - 40px));
+  height: min(920px, calc(100dvh - 40px));
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  background: var(--panel-strong);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.document-dialog__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  min-width: 0;
+  padding: 24px 24px 18px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.document-dialog__header > div:first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.document-dialog__header h2 {
+  margin: 10px 0 8px;
+}
+
+.document-dialog__header p {
+  max-width: 760px;
+  margin: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.document-dialog__actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.document-dialog__content {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.72fr);
+  gap: 0;
+  min-height: 0;
+}
+
+.document-dialog__editor,
+.document-dialog__sidebar {
+  min-width: 0;
+  min-height: 0;
+}
+
+.document-dialog__editor {
+  padding: 24px;
+  overflow: auto;
+}
+
+.document-dialog__sidebar {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 24px;
+  border-left: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(6, 12, 23, 0.52);
+  overflow: auto;
 }
 
 .react-flow__controls,
@@ -607,6 +714,25 @@ textarea {
     align-items: flex-start;
     flex-direction: column;
   }
+
+  .document-dialog {
+    padding: 12px;
+  }
+
+  .document-dialog__panel {
+    width: min(100vw - 24px, 100%);
+    height: min(100dvh - 24px, 100%);
+  }
+
+  .document-dialog__header,
+  .document-dialog__content {
+    grid-template-columns: 1fr;
+  }
+
+  .document-dialog__sidebar {
+    border-left: 0;
+    border-top: 1px solid rgba(148, 163, 184, 0.14);
+  }
 }
 
 @media (max-width: 640px) {
@@ -622,5 +748,21 @@ textarea {
   .canvas-shell,
   .canvas-empty {
     min-height: 560px;
+  }
+
+  .document-dialog {
+    padding: 8px;
+  }
+
+  .document-dialog__panel {
+    width: calc(100vw - 16px);
+    height: calc(100dvh - 16px);
+    border-radius: 22px;
+  }
+
+  .document-dialog__header,
+  .document-dialog__editor,
+  .document-dialog__sidebar {
+    padding: 16px;
   }
 }

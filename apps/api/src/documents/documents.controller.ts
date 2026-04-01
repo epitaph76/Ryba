@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Param, Patch, Post, Put, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { z } from 'zod';
 import {
@@ -9,6 +9,7 @@ import {
   listDocumentBacklinksResponseSchema,
   listDocumentsResponseSchema,
   spaceIdParamsSchema,
+  upsertEntityDocumentRequestSchema,
   updateDocumentRequestSchema,
 } from '@ryba/schemas';
 import type {
@@ -29,6 +30,7 @@ type SpaceIdParams = z.infer<typeof spaceIdParamsSchema>;
 type DocumentIdParams = z.infer<typeof documentIdParamsSchema>;
 type EntityIdParams = z.infer<typeof entityIdParamsSchema>;
 type CreateDocumentRequest = z.infer<typeof createDocumentRequestSchema>;
+type UpsertEntityDocumentRequest = z.infer<typeof upsertEntityDocumentRequestSchema>;
 type UpdateDocumentRequest = z.infer<typeof updateDocumentRequestSchema>;
 type ListDocumentsResponse = z.infer<typeof listDocumentsResponseSchema>;
 type ListDocumentBacklinksResponse = z.infer<typeof listDocumentBacklinksResponseSchema>;
@@ -82,6 +84,18 @@ export class DocumentsController {
     return envelope(detail);
   }
 
+  @Get('entities/:entityId/document')
+  async getDocumentForEntity(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param(new ZodValidationPipe(entityIdParamsSchema))
+    params: EntityIdParams,
+  ): Promise<ApiEnvelope<DocumentDetailRecord>> {
+    const detail = await this.documentsService.getDocumentForEntity(user.userId, params);
+    documentDetailRecordSchema.parse(detail);
+
+    return envelope(detail);
+  }
+
   @Patch('documents/:documentId')
   async updateDocument(
     @CurrentUser() user: AuthenticatedUser,
@@ -91,6 +105,20 @@ export class DocumentsController {
     payload: UpdateDocumentRequest,
   ): Promise<ApiEnvelope<DocumentDetailRecord>> {
     const detail = await this.documentsService.updateDocument(user.userId, params, payload);
+    documentDetailRecordSchema.parse(detail);
+
+    return envelope(detail);
+  }
+
+  @Put('entities/:entityId/document')
+  async upsertDocumentForEntity(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param(new ZodValidationPipe(entityIdParamsSchema))
+    params: EntityIdParams,
+    @Body(new ZodValidationPipe(upsertEntityDocumentRequestSchema))
+    payload: UpsertEntityDocumentRequest,
+  ): Promise<ApiEnvelope<DocumentDetailRecord>> {
+    const detail = await this.documentsService.upsertDocumentForEntity(user.userId, params, payload);
     documentDetailRecordSchema.parse(detail);
 
     return envelope(detail);

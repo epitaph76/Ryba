@@ -6,142 +6,144 @@
 
 ## Область работы
 
-Этот документ фиксирует завершённую реализацию этапа `S-5` из `PROJECT_STATUS.md`.
+Этот документ фиксирует фактическую реализацию этапа `S-5` из `PROJECT_STATUS.md`.
 
-На этом шаге проект получает document/narrative слой вокруг существующих `entities`:
+На этом шаге Ryba перестаёт воспринимать документ как отдельный побочный экран и переводит его в часть предметной модели:
 
-- persisted rich text документы;
+- у каждой записи на канве может быть собственный документ;
+- документ хранится как `1:1`-проекция `entity` через `documents.entity_id`;
+- документ открывается из самой канвы, а не живёт отдельно от неё;
+- ссылки внутри текста автоматически превращаются в связи между нодами;
+- сущность получает narrative-контекст, а не только структурированные поля.
+
+## Что входит в этап
+
+Реализовано:
+
+- persisted rich text через Tiptap;
+- entity-backed document storage;
 - entity mentions внутри текста;
-- backlinks от сущности к документам, где она упомянута;
-- linked entity previews рядом с документом;
-- отдельный model-слой сериализации документа на web.
+- backlinks для упомянутых сущностей;
+- preview linked entities и backlink sources;
+- полноэкранный document view/edit flow;
+- автоматическая синхронизация relations из mentions;
+- web model-слой для сериализации и подготовки document payload.
 
-Что подтверждено в коде и тестах:
-
-- в PostgreSQL появились `documents` и `document_entity_mentions`;
-- `apps/api` получил `DocumentsModule` и REST-first API для document flow;
-- `apps/web` получил встроенный document view на Tiptap внутри основного рабочего экрана;
-- mentions и document serialization вынесены в отдельный helper/model-слой и покрыты тестами.
-
-## Что вне scope
-
-S-5 не пытается закрыть весь collaborative editor сразу.
-
-Из этого этапа намеренно исключены:
+Что сознательно не входит в `S-5`:
 
 - range comments;
 - version history;
-- финальный collaboration UX;
+- полноценный multiplayer UX;
 - threaded discussions;
-- полноценная rich media / embed platform;
-- tables, saved views, groups и permission model.
+- сложные embeds/media workflows;
+- tables, saved views и прочие lens-слои следующих этапов.
 
-## Архитектура хранения
+## Архитектура
 
-Текущий document storage слой устроен так:
+### Entity-backed document model
 
-- `documents` хранит сам документ на уровне `workspace + space`;
-- `documents.body` хранит сериализованный список `DocumentBlock[]`;
-- `documents.previewText` хранит краткий preview для списков и backlinks;
-- `document_entity_mentions` хранит все ссылки документа на сущности;
-- mentions валидируются относительно сущностей того же `workspace` и `space`.
+Документ больше не живёт как независимая сущность второго сорта. Теперь:
 
-Это даёт простой и расширяемый baseline:
+- `documents.entity_id` связывает документ с конкретной записью на канве;
+- для каждой записи документ существует как narrative view этой записи;
+- API умеет получать и сохранять документ прямо по `entityId`;
+- корневой ownership marker остаётся в payload, но скрывается из editable draft на фронте.
 
-- документ живёт как отдельный narrative-слой, но не отрывается от core domain;
-- backlinks не вычисляются ad-hoc на клиенте, а доступны как отдельный API-сценарий;
-- сериализация документа остаётся контролируемой;
-- позже можно заменить token-based mentions на richer node/extension, не ломая весь слой хранения.
+Это даёт простую расширяемую модель:
 
-### Document record
+- запись остаётся центром данных;
+- документ становится её narrative-слоем;
+- detail view и document view работают вокруг одной и той же `entity`;
+- в будущем можно расширять editor, не ломая доменную привязку.
 
-`DocumentRecord` сейчас содержит:
+### Storage и derived data
 
-- `id`;
-- `workspaceId`;
-- `spaceId`;
-- `title`;
-- `body`;
-- `previewText`;
-- `createdByUserId`;
-- `updatedByUserId`;
-- timestamps.
+В backend слой входят:
 
-### Mentions и backlinks
+- `documents` для самого документа;
+- `document_entity_mentions` для явных ссылок из текста;
+- `relations` как производный граф, синхронизируемый из mentions при сохранении.
 
-`DocumentEntityReference` и `DocumentBacklinkRecord` покрывают две стороны одной связи:
+Важное поведение:
 
-- в документе mention связывает текст с `entityId`;
-- у сущности backlinks показывают документы, где она упоминается;
-- preview строится вокруг readable `previewText`, а не raw storage JSON.
+- mention можно сохранить только на сущность из того же `workspace` и `space`;
+- self-link на owning entity не превращается в графовую связь;
+- удалённые из текста mentions удаляют и соответствующие auto-relations;
+- backlinks читаются из mention storage, а не вычисляются эвристически на клиенте.
 
 ## API слой
 
-S-5 document API реализован как обычный REST-набор:
+В `apps/api` этап выражен так:
 
-- `GET /spaces/:spaceId/documents`
-- `POST /spaces/:spaceId/documents`
-- `GET /documents/:documentId`
-- `PATCH /documents/:documentId`
+- `GET /entities/:entityId/document`
+- `PUT /entities/:entityId/document`
 - `GET /entities/:entityId/document-backlinks`
+- legacy document endpoints остаются, но основной `S5` flow теперь идёт через `entityId`
 
-Что важно:
+Дополнительно backend делает две вещи, которые важны для UX:
 
-- список документов отдаётся на уровне `space`;
-- создание и обновление документа валидируют mentions по `entities` того же пространства;
-- detail response возвращает сам документ и previews упомянутых сущностей;
-- backlinks читаются от entity, а не вычисляются вручную во view-слое.
+- при сохранении документа синхронно обновляет `relations` типа `document_link` на основе mentions;
+- при повторной регистрации существующего email отдаёт `409 CONFLICT` с `details: { email, canLogin: true }`, чтобы фронт мог сразу переводить пользователя в login-flow.
 
 ## UI слой
 
-Фронтенд получил встроенный document workflow внутри основного `apps/web/src/App.tsx`.
+Фактический пользовательский flow теперь такой:
 
-Что есть сейчас:
+1. Пользователь открывает пространство и видит канву сущностей.
+2. Двойной клик по ноде открывает полноэкранный редактор документа этой записи.
+3. В редакторе можно писать rich text и вставлять ссылки через mention picker.
+4. После сохранения ссылки из текста автоматически создают или обновляют связи между нодами на канве.
+5. В документе видны связанные записи и обратные ссылки.
+6. В detail panel остаются typed fields и metadata той же сущности.
 
-- отдельная панель `Documents` рядом с канвой и detail/schema panels;
-- `DocumentComposer` на базе Tiptap StarterKit и placeholder-логики;
-- вставка mentions через entity picker в toolbar;
-- загрузка и сохранение документа через `canvas-api.ts`;
-- linked entity previews рядом с документом;
-- backlinks внутри `Detail view` выбранной сущности;
-- отдельный `document-model.ts` для сериализации editor JSON в `DocumentBlock[]` и обратно.
+Что изменилось относительно старого прототипа:
 
-Что это значит practically:
+- убран legacy sidebar с отдельным списком документов;
+- убран ручной `connect` flow для document-сценария;
+- связи строятся из текста, а не рисуются вручную;
+- документ открывается как часть работы с нодой;
+- выбранную ноду можно удалить клавишей `Delete`;
+- ключевые пользовательские тексты переведены на русский;
+- верхняя панель и fullscreen dialog получили более устойчивый layout.
 
-- documents уже не живут как отдельный технический prototype;
-- narrative и structured layer доступны в одном рабочем экране;
-- пользователь может писать текст и сразу связывать его с предметными объектами;
-- слой уже пригоден как knowledge workspace baseline, не дожидаясь realtime.
+## Как сейчас работают ссылки
 
-## Проверка
+Ссылка создаётся не вручную линией на канве, а из редактора документа:
 
-Для локальной проверки S-5 использовались:
+- в тулбаре выбирается сущность в mention picker;
+- кнопка `Вставить ссылку` вставляет mention-токен в текст;
+- при сохранении фронт сериализует документ в `DocumentBlock[]`;
+- backend извлекает mentions, валидирует их и обновляет `document_entity_mentions`;
+- из актуального набора mentions backend синхронизирует `relations`;
+- после перезагрузки канвы пользователь видит появившиеся или обновлённые связи между нодами.
 
-- `docker compose up -d postgres`
-- `corepack pnpm db:migrate`
-- `corepack pnpm --dir packages/types typecheck`
+То есть источник истины для narrative-связей здесь именно текст документа.
+
+## Тесты и проверка
+
+Этап покрыт двумя уровнями проверки:
+
+- `apps/api/test/s5.integration.test.ts`
+- `apps/web/src/document-model.test.ts`
+- `apps/web/src/entity-document-model.test.ts`
+
+Для локальной проверки использовались:
+
 - `corepack pnpm --dir packages/types build`
-- `corepack pnpm --dir packages/schemas typecheck`
 - `corepack pnpm --dir packages/schemas build`
+- `corepack pnpm --filter @ryba/api typecheck`
+- `corepack pnpm --filter @ryba/api test -- --runInBand`
 - `corepack pnpm --filter @ryba/web typecheck`
 - `corepack pnpm --filter @ryba/web test`
-- `corepack pnpm --filter @ryba/api typecheck`
-- `corepack pnpm --filter @ryba/api test`
+- `corepack pnpm --filter @ryba/web build`
 - `corepack pnpm typecheck`
 - `corepack pnpm test`
 - `corepack pnpm build`
 
-Новые тесты для этого этапа:
+## Результат этапа
 
-- `apps/api/test/s5.integration.test.ts`
-- `apps/web/src/document-model.test.ts`
+Главный результат `S-5` теперь формулируется так:
 
-## Следующий шаг
+Ryba работает не только как граф сущностей и не только как набор typed fields. Каждая нода получила narrative-поверхность, где можно фиксировать контекст, связывать записи текстом и автоматически отражать эти связи обратно на канву.
 
-После завершения S-5 следующий логичный этап roadmap - `S-6`, то есть `Tables и Saved Views`.
-
-Это продолжает текущую линию:
-
-- сначала типизированный record layer;
-- затем narrative/document layer;
-- потом структурированная tabular lens для daily work поверх уже существующих entities и documents.
+Следующий логичный этап roadmap после `S-5` — `S-6`, то есть `Tables и Saved Views`.

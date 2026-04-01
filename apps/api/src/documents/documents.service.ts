@@ -5,11 +5,12 @@ import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import type { z } from 'zod';
 import {
   createDocumentRequestSchema,
-  documentIdParamsSchema,
   documentEntityReferenceSchema,
+  documentIdParamsSchema,
   entityIdParamsSchema,
   spaceIdParamsSchema,
   updateDocumentRequestSchema,
+  upsertEntityDocumentRequestSchema,
 } from '@ryba/schemas';
 import type {
   DocumentBacklinkRecord,
@@ -18,7 +19,6 @@ import type {
   DocumentEntityPreview,
   DocumentEntityReference,
   DocumentRecord,
-  EntityRecord,
 } from '@ryba/types';
 
 import { ApiException } from '../common/api-exception';
@@ -29,7 +29,8 @@ import {
   toDocumentRecord,
   toEntityRecord,
 } from '../db/mappers';
-import { documentEntityMentions, documents, entities, spaces } from '../db/schema';
+import { documentEntityMentions, documents, entities, relations, spaces } from '../db/schema';
+import { EntityTypesService } from '../entity-types/entity-types.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 
 type SpaceIdParams = z.infer<typeof spaceIdParamsSchema>;
@@ -37,15 +38,21 @@ type DocumentIdParams = z.infer<typeof documentIdParamsSchema>;
 type EntityIdParams = z.infer<typeof entityIdParamsSchema>;
 type CreateDocumentRequest = z.infer<typeof createDocumentRequestSchema>;
 type UpdateDocumentRequest = z.infer<typeof updateDocumentRequestSchema>;
+type UpsertEntityDocumentRequest = z.infer<typeof upsertEntityDocumentRequestSchema>;
 
 type SpaceRow = typeof spaces.$inferSelect;
 type DocumentRow = typeof documents.$inferSelect;
+type EntityRow = typeof entities.$inferSelect;
+
+const DOCUMENT_RELATION_TYPE = 'document_link';
 
 @Injectable()
 export class DocumentsService {
   constructor(
     @Inject(DatabaseService)
     private readonly databaseService: DatabaseService,
+    @Inject(EntityTypesService)
+    private readonly entityTypesService: EntityTypesService,
     @Inject(WorkspacesService)
     private readonly workspacesService: WorkspacesService,
   ) {}
@@ -68,47 +75,12 @@ export class DocumentsService {
     params: SpaceIdParams,
     payload: CreateDocumentRequest,
   ): Promise<DocumentDetailRecord> {
-    const db = this.getDb();
     const space = await this.requireSpaceAccess(userId, params.spaceId);
-    const body = payload.body;
-    const mentionRows = await this.buildMentionRows(space, body);
-    const now = new Date().toISOString();
-    const documentId = randomUUID();
+    const entity = await this.createBackingEntity(userId, space, payload.title.trim(), payload.body);
 
-    await db.transaction(async (tx) => {
-      await tx.insert(documents).values({
-        id: documentId,
-        workspaceId: space.workspaceId,
-        spaceId: space.id,
-        title: payload.title.trim(),
-        body,
-        previewText: buildPreviewText(body),
-        createdByUserId: userId,
-        updatedByUserId: userId,
-        createdAt: now,
-        updatedAt: now,
-      });
-
-      if (mentionRows.length > 0) {
-        await tx.insert(documentEntityMentions).values(
-          mentionRows.map((mention) => ({
-            id: randomUUID(),
-            documentId,
-            workspaceId: space.workspaceId,
-            spaceId: space.id,
-            entityId: mention.entityId,
-            blockId: mention.blockId,
-            label: mention.label,
-            anchorId: mention.anchorId,
-            createdAt: now,
-            updatedAt: now,
-          })),
-        );
-      }
-    });
-
-    return this.getDocument(userId, {
-      documentId,
+    return this.createDocumentForEntity(userId, entity, {
+      title: payload.title,
+      body: payload.body,
     });
   }
 
@@ -118,57 +90,41 @@ export class DocumentsService {
     return this.buildDocumentDetail(document);
   }
 
+  async getDocumentForEntity(userId: string, params: EntityIdParams): Promise<DocumentDetailRecord> {
+    const entity = await this.requireEntityAccess(userId, params.entityId);
+    const document = await this.findDocumentByEntityId(entity.id);
+
+    if (!document) {
+      throw new ApiException(HttpStatus.NOT_FOUND, 'NOT_FOUND', 'Document for entity not found');
+    }
+
+    return this.buildDocumentDetail(document);
+  }
+
   async updateDocument(
     userId: string,
     params: DocumentIdParams,
     payload: UpdateDocumentRequest,
   ): Promise<DocumentDetailRecord> {
-    const db = this.getDb();
     const document = await this.requireDocumentAccess(userId, params.documentId);
-    const nextBody = payload.body ?? toDocumentRecord(document).body;
-    const nextTitle = payload.title?.trim() ?? document.title;
-    const mentionRows = await this.buildMentionRows(
-      {
-        id: document.spaceId,
-        workspaceId: document.workspaceId,
-      } as SpaceRow,
-      nextBody,
-    );
-    const now = new Date().toISOString();
+    const entity = await this.requireEntityAccess(userId, document.entityId);
 
-    await db.transaction(async (tx) => {
-      await tx
-        .update(documents)
-        .set({
-          title: nextTitle,
-          body: nextBody,
-          previewText: buildPreviewText(nextBody),
-          updatedByUserId: userId,
-          updatedAt: now,
-        })
-        .where(eq(documents.id, document.id));
+    return this.persistDocument(userId, entity, document, payload);
+  }
 
-      await tx.delete(documentEntityMentions).where(eq(documentEntityMentions.documentId, document.id));
+  async upsertDocumentForEntity(
+    userId: string,
+    params: EntityIdParams,
+    payload: UpsertEntityDocumentRequest,
+  ): Promise<DocumentDetailRecord> {
+    const entity = await this.requireEntityAccess(userId, params.entityId);
+    const existing = await this.findDocumentByEntityId(entity.id);
 
-      if (mentionRows.length > 0) {
-        await tx.insert(documentEntityMentions).values(
-          mentionRows.map((mention) => ({
-            id: randomUUID(),
-            documentId: document.id,
-            workspaceId: document.workspaceId,
-            spaceId: document.spaceId,
-            entityId: mention.entityId,
-            blockId: mention.blockId,
-            label: mention.label,
-            anchorId: mention.anchorId,
-            createdAt: now,
-            updatedAt: now,
-          })),
-        );
-      }
-    });
+    if (existing) {
+      return this.persistDocument(userId, entity, existing, payload);
+    }
 
-    return this.getDocument(userId, params);
+    return this.createDocumentForEntity(userId, entity, payload);
   }
 
   async listDocumentBacklinks(
@@ -188,35 +144,186 @@ export class DocumentsService {
       .where(eq(documentEntityMentions.entityId, entity.id))
       .orderBy(desc(documents.updatedAt), asc(documentEntityMentions.createdAt));
 
-    const seenDocumentIds = new Set<string>();
+    return rows.map((row) => toDocumentBacklinkRecord(row.mention, toDocumentRecord(row.document)));
+  }
 
-    return rows.flatMap((row) => {
-      if (seenDocumentIds.has(row.document.id)) {
-        return [];
+  private async createDocumentForEntity(
+    userId: string,
+    entity: EntityRow,
+    payload: { title?: string; body?: DocumentBlock[] },
+  ): Promise<DocumentDetailRecord> {
+    const db = this.getDb();
+    const now = new Date().toISOString();
+    const documentId = randomUUID();
+    const body = payload.body ?? [];
+    const title = payload.title?.trim() || entity.title;
+    const previewText = buildPreviewText(body);
+    const mentionRows = await this.buildMentionRows(entity, body);
+
+    await db.transaction(async (tx) => {
+      await tx
+        .update(entities)
+        .set({
+          title,
+          summary: previewText || entity.summary,
+          updatedByUserId: userId,
+          updatedAt: now,
+        })
+        .where(eq(entities.id, entity.id));
+
+      await tx.insert(documents).values({
+        id: documentId,
+        workspaceId: entity.workspaceId,
+        spaceId: entity.spaceId,
+        entityId: entity.id,
+        title,
+        body,
+        previewText,
+        createdByUserId: userId,
+        updatedByUserId: userId,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      if (mentionRows.length > 0) {
+        await tx.insert(documentEntityMentions).values(
+          mentionRows.map((mention) => ({
+            id: randomUUID(),
+            documentId,
+            workspaceId: entity.workspaceId,
+            spaceId: entity.spaceId,
+            entityId: mention.entityId,
+            blockId: mention.blockId,
+            label: mention.label,
+            anchorId: mention.anchorId,
+            createdAt: now,
+            updatedAt: now,
+          })),
+        );
       }
-
-      seenDocumentIds.add(row.document.id);
-
-      return [
-        toDocumentBacklinkRecord(
-          row.mention,
-          toDocumentRecord(row.document),
-        ),
-      ];
     });
+
+    await this.syncDocumentRelations(userId, {
+      documentId,
+      workspaceId: entity.workspaceId,
+      spaceId: entity.spaceId,
+      sourceEntityId: entity.id,
+      mentions: mentionRows,
+    });
+
+    return this.getDocument(userId, { documentId });
+  }
+
+  private async persistDocument(
+    userId: string,
+    entity: EntityRow,
+    document: DocumentRow,
+    payload: { title?: string; body?: DocumentBlock[] },
+  ): Promise<DocumentDetailRecord> {
+    const db = this.getDb();
+    const now = new Date().toISOString();
+    const nextBody = payload.body ?? toDocumentRecord(document).body;
+    const nextTitle = payload.title?.trim() || entity.title;
+    const previewText = buildPreviewText(nextBody);
+    const mentionRows = await this.buildMentionRows(entity, nextBody);
+
+    await db.transaction(async (tx) => {
+      await tx
+        .update(entities)
+        .set({
+          title: nextTitle,
+          summary: previewText || entity.summary,
+          updatedByUserId: userId,
+          updatedAt: now,
+        })
+        .where(eq(entities.id, entity.id));
+
+      await tx
+        .update(documents)
+        .set({
+          title: nextTitle,
+          body: nextBody,
+          previewText,
+          updatedByUserId: userId,
+          updatedAt: now,
+        })
+        .where(eq(documents.id, document.id));
+
+      await tx.delete(documentEntityMentions).where(eq(documentEntityMentions.documentId, document.id));
+
+      if (mentionRows.length > 0) {
+        await tx.insert(documentEntityMentions).values(
+          mentionRows.map((mention) => ({
+            id: randomUUID(),
+            documentId: document.id,
+            workspaceId: entity.workspaceId,
+            spaceId: entity.spaceId,
+            entityId: mention.entityId,
+            blockId: mention.blockId,
+            label: mention.label,
+            anchorId: mention.anchorId,
+            createdAt: now,
+            updatedAt: now,
+          })),
+        );
+      }
+    });
+
+    await this.syncDocumentRelations(userId, {
+      documentId: document.id,
+      workspaceId: entity.workspaceId,
+      spaceId: entity.spaceId,
+      sourceEntityId: entity.id,
+      mentions: mentionRows,
+    });
+
+    return this.getDocument(userId, { documentId: document.id });
   }
 
   private async buildDocumentDetail(document: DocumentRow): Promise<DocumentDetailRecord> {
-    const db = this.getDb();
     const record = toDocumentRecord(document);
+    const entity = await this.requireEntityByWorkspace(record.workspaceId, record.entityId);
     const mentions = flattenDocumentMentions(record.body);
     const mentionedEntities = await this.loadMentionedEntities(record, mentions);
 
     return {
       document: record,
+      entity: {
+        id: entity.id,
+        title: entity.title,
+        summary: entity.summary,
+        entityTypeId: entity.entityTypeId,
+      },
       mentions,
       mentionedEntities,
     };
+  }
+
+  private async createBackingEntity(
+    userId: string,
+    space: SpaceRow,
+    title: string,
+    body: DocumentBlock[],
+  ): Promise<EntityRow> {
+    const db = this.getDb();
+    const defaultType = await this.entityTypesService.resolveEntityTypeForWorkspace(space.workspaceId, null);
+    const previewText = buildPreviewText(body);
+    const [entity] = await db
+      .insert(entities)
+      .values({
+        id: randomUUID(),
+        workspaceId: space.workspaceId,
+        spaceId: space.id,
+        entityTypeId: defaultType?.id ?? null,
+        title,
+        summary: previewText || null,
+        properties: {},
+        createdByUserId: userId,
+        updatedByUserId: userId,
+      })
+      .returning();
+
+    return entity;
   }
 
   private async loadMentionedEntities(
@@ -254,7 +361,10 @@ export class DocumentsService {
     );
   }
 
-  private async buildMentionRows(space: Pick<SpaceRow, 'id' | 'workspaceId'>, body: DocumentBlock[]) {
+  private async buildMentionRows(
+    entity: Pick<EntityRow, 'id' | 'workspaceId' | 'spaceId'>,
+    body: DocumentBlock[],
+  ) {
     const mentions = body.flatMap((block) =>
       block.entityReferences.map((reference) => ({
         blockId: block.id,
@@ -275,8 +385,8 @@ export class DocumentsService {
       .from(entities)
       .where(
         and(
-          eq(entities.workspaceId, space.workspaceId),
-          eq(entities.spaceId, space.id),
+          eq(entities.workspaceId, entity.workspaceId),
+          eq(entities.spaceId, entity.spaceId),
           inArray(entities.id, uniqueEntityIds),
         ),
       );
@@ -289,7 +399,109 @@ export class DocumentsService {
       );
     }
 
-    return mentions;
+    return mentions.filter((mention) => mention.entityId !== entity.id);
+  }
+
+  private async syncDocumentRelations(
+    userId: string,
+    input: {
+      documentId: string;
+      workspaceId: string;
+      spaceId: string;
+      sourceEntityId: string;
+      mentions: Array<{
+        entityId: string;
+        blockId: string;
+        label: string | null;
+        anchorId: string | null;
+      }>;
+    },
+  ) {
+    const db = this.getDb();
+    const now = new Date().toISOString();
+    const mentionByTargetId = new Map(
+      input.mentions.map((mention) => [mention.entityId, mention]),
+    );
+    const targetEntityIds = Array.from(mentionByTargetId.keys());
+
+    const existingRows = await db
+      .select()
+      .from(relations)
+      .where(
+        and(
+          eq(relations.workspaceId, input.workspaceId),
+          eq(relations.spaceId, input.spaceId),
+          eq(relations.fromEntityId, input.sourceEntityId),
+          eq(relations.relationType, DOCUMENT_RELATION_TYPE),
+        ),
+      );
+
+    const existingByTargetId = new Map(
+      existingRows
+        .filter((row) => extractSourceDocumentId(row.properties) === input.documentId)
+        .map((row) => [row.toEntityId, row]),
+    );
+
+    await db.transaction(async (tx) => {
+      for (const [targetEntityId, existingRow] of existingByTargetId) {
+        if (!targetEntityIds.includes(targetEntityId)) {
+          await tx.delete(relations).where(eq(relations.id, existingRow.id));
+          continue;
+        }
+
+        const mention = mentionByTargetId.get(targetEntityId);
+
+        await tx
+          .update(relations)
+          .set({
+            properties: {
+              source: 'document_mention',
+              sourceDocumentId: input.documentId,
+              label: mention?.label ?? null,
+              anchorId: mention?.anchorId ?? null,
+            },
+            updatedByUserId: userId,
+            updatedAt: now,
+          })
+          .where(eq(relations.id, existingRow.id));
+      }
+
+      for (const targetEntityId of targetEntityIds) {
+        if (existingByTargetId.has(targetEntityId)) {
+          continue;
+        }
+
+        const mention = mentionByTargetId.get(targetEntityId);
+
+        await tx.insert(relations).values({
+          id: randomUUID(),
+          workspaceId: input.workspaceId,
+          spaceId: input.spaceId,
+          fromEntityId: input.sourceEntityId,
+          toEntityId: targetEntityId,
+          relationType: DOCUMENT_RELATION_TYPE,
+          properties: {
+            source: 'document_mention',
+            sourceDocumentId: input.documentId,
+            label: mention?.label ?? null,
+            anchorId: mention?.anchorId ?? null,
+          },
+          createdByUserId: userId,
+          updatedByUserId: userId,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    });
+  }
+
+  private async findDocumentByEntityId(entityId: string): Promise<DocumentRow | null> {
+    const db = this.getDb();
+    return (
+      (await db.query.documents.findFirst({
+        where: eq(documents.entityId, entityId),
+      })) ?? null
+    );
   }
 
   private async requireDocumentAccess(userId: string, documentId: string): Promise<DocumentRow> {
@@ -307,17 +519,24 @@ export class DocumentsService {
     return document;
   }
 
-  private async requireEntityAccess(userId: string, entityId: string) {
+  private async requireEntityAccess(userId: string, entityId: string): Promise<EntityRow> {
+    const entity = await this.requireEntityByWorkspace(null, entityId);
+    await this.workspacesService.requireMembership(userId, entity.workspaceId);
+    return entity;
+  }
+
+  private async requireEntityByWorkspace(
+    workspaceId: string | null,
+    entityId: string,
+  ): Promise<EntityRow> {
     const db = this.getDb();
     const entity = await db.query.entities.findFirst({
       where: eq(entities.id, entityId),
     });
 
-    if (!entity) {
+    if (!entity || (workspaceId && entity.workspaceId !== workspaceId)) {
       throw new ApiException(HttpStatus.NOT_FOUND, 'NOT_FOUND', 'Entity not found');
     }
-
-    await this.workspacesService.requireMembership(userId, entity.workspaceId);
 
     return entity;
   }
@@ -379,3 +598,13 @@ const replaceMentionTokens = (text: string, references: DocumentEntityReference[
 };
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const extractSourceDocumentId = (value: unknown) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  const properties = value as Record<string, unknown>;
+
+  return typeof properties.sourceDocumentId === 'string' ? properties.sourceDocumentId : null;
+};

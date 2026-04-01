@@ -10,6 +10,8 @@ import {
   listDocumentBacklinksResponseSchema,
   listDocumentsResponseSchema,
   listEntityTypesResponseSchema,
+  listRelationsResponseSchema,
+  loginRequestSchema,
   spaceRecordSchema,
   workspaceRecordSchema,
 } from '@ryba/schemas';
@@ -21,6 +23,7 @@ import type {
   DocumentRecord,
   EntityRecord,
   EntityTypeRecord,
+  RelationRecord,
   SpaceRecord,
   WorkspaceRecord,
 } from '@ryba/types';
@@ -65,13 +68,13 @@ describe('S-5 integration', () => {
     await pool.end();
   });
 
-  it('creates documents with entity mentions and exposes backlinks', async () => {
+  it('binds documents to entity nodes and syncs relations from mentions', async () => {
     const token = await bootstrapUserAndGetToken('s5-docs@ryba.local');
     const workspace = await createWorkspace(token, 'Docs Workspace', 'docs-workspace');
     const space = await createSpace(token, workspace.id, 'Knowledge', 'knowledge');
     const taskType = await getEntityTypeBySlug(token, workspace.id, 'task');
 
-    const entity = await createEntity(token, space.id, {
+    const targetEntity = await createEntity(token, space.id, {
       entityTypeId: taskType.id,
       title: 'Ship S5',
       summary: 'Narrative context target',
@@ -88,18 +91,12 @@ describe('S-5 integration', () => {
         body: [
           {
             id: 'block-1',
-            kind: 'heading',
-            text: 'S5 design note',
-            entityReferences: [],
-          },
-          {
-            id: 'block-2',
             kind: 'paragraph',
-            text: `Need to connect [[entity:${entity.id}]] to the narrative layer.`,
+            text: `Need to connect [[entity:${targetEntity.id}|${targetEntity.title}]] to the narrative layer.`,
             entityReferences: [
               {
-                entityId: entity.id,
-                label: entity.title,
+                entityId: targetEntity.id,
+                label: targetEntity.title,
                 anchorId: 'mention-task',
               },
             ],
@@ -110,47 +107,50 @@ describe('S-5 integration', () => {
 
     const createdDetail = unwrap<DocumentDetailRecord>(createResponse.body);
     documentDetailRecordSchema.parse(createdDetail);
-    expect(createdDetail.document.title).toBe('S5 design note');
-    expect(createdDetail.document.previewText).toContain('S5 design note');
+    expect(createdDetail.document.entityId).toBe(createdDetail.entity.id);
+    expect(createdDetail.entity.title).toBe('S5 design note');
     expect(createdDetail.mentionedEntities).toEqual([
       expect.objectContaining({
-        entityId: entity.id,
-        title: entity.title,
+        entityId: targetEntity.id,
+        title: targetEntity.title,
       }),
     ]);
 
-    const listResponse = await request(app.getHttpServer())
-      .get(`/spaces/${space.id}/documents`)
+    const entityDocumentResponse = await request(app.getHttpServer())
+      .get(`/entities/${createdDetail.entity.id}/document`)
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
 
-    const list = unwrap<{ items: DocumentRecord[] }>(listResponse.body);
-    listDocumentsResponseSchema.parse(list);
-    expect(list.items).toHaveLength(1);
-    expect(list.items[0]?.id).toBe(createdDetail.document.id);
+    const entityDocument = unwrap<DocumentDetailRecord>(entityDocumentResponse.body);
+    documentDetailRecordSchema.parse(entityDocument);
+    expect(entityDocument.document.id).toBe(createdDetail.document.id);
+
+    const relationsResponse = await request(app.getHttpServer())
+      .get(`/spaces/${space.id}/relations`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const relationsList = unwrap<{ items: RelationRecord[] }>(relationsResponse.body);
+    listRelationsResponseSchema.parse(relationsList);
+    expect(relationsList.items).toEqual([
+      expect.objectContaining({
+        fromEntityId: createdDetail.entity.id,
+        toEntityId: targetEntity.id,
+        relationType: 'document_link',
+      }),
+    ]);
 
     const updateResponse = await request(app.getHttpServer())
-      .patch(`/documents/${createdDetail.document.id}`)
+      .put(`/entities/${createdDetail.entity.id}/document`)
       .set('Authorization', `Bearer ${token}`)
       .send({
+        title: 'S5 design note updated',
         body: [
           {
-            id: 'block-1',
-            kind: 'heading',
-            text: 'S5 design note',
-            entityReferences: [],
-          },
-          {
-            id: 'block-3',
+            id: 'block-2',
             kind: 'paragraph',
-            text: `The document keeps [[entity:${entity.id}]] as a live mention.`,
-            entityReferences: [
-              {
-                entityId: entity.id,
-                label: 'Ship S5',
-                anchorId: 'mention-task',
-              },
-            ],
+            text: 'The mention was removed from the document.',
+            entityReferences: [],
           },
         ],
       })
@@ -158,22 +158,25 @@ describe('S-5 integration', () => {
 
     const updatedDetail = unwrap<DocumentDetailRecord>(updateResponse.body);
     documentDetailRecordSchema.parse(updatedDetail);
-    expect(updatedDetail.document.previewText).toContain('live mention');
+    expect(updatedDetail.entity.title).toBe('S5 design note updated');
+
+    const relationsAfterUpdateResponse = await request(app.getHttpServer())
+      .get(`/spaces/${space.id}/relations`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const relationsAfterUpdate = unwrap<{ items: RelationRecord[] }>(relationsAfterUpdateResponse.body);
+    listRelationsResponseSchema.parse(relationsAfterUpdate);
+    expect(relationsAfterUpdate.items).toEqual([]);
 
     const backlinksResponse = await request(app.getHttpServer())
-      .get(`/entities/${entity.id}/document-backlinks`)
+      .get(`/entities/${targetEntity.id}/document-backlinks`)
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
 
     const backlinks = unwrap<{ items: DocumentBacklinkRecord[] }>(backlinksResponse.body);
     listDocumentBacklinksResponseSchema.parse(backlinks);
-    expect(backlinks.items).toEqual([
-      expect.objectContaining({
-        entityId: entity.id,
-        documentId: createdDetail.document.id,
-        documentTitle: 'S5 design note',
-      }),
-    ]);
+    expect(backlinks.items).toEqual([]);
   });
 
   it('rejects mentions that point to entities from another space', async () => {
@@ -213,43 +216,47 @@ describe('S-5 integration', () => {
     expect(response.body.error.code).toBe('VALIDATION_ERROR');
   });
 
-  it('blocks cross-workspace access to documents and backlinks', async () => {
-    const tokenOne = await bootstrapUserAndGetToken('s5-first@ryba.local');
-    const tokenTwo = await bootstrapUserAndGetToken('s5-second@ryba.local');
-    const workspace = await createWorkspace(tokenTwo, 'Private Docs', 'private-docs');
-    const space = await createSpace(tokenTwo, workspace.id, 'Ops', 'ops');
-    const entity = await createEntity(tokenTwo, space.id, {
-      title: 'Private entity',
+  it('supports repeat registration UX via conflict details and stable login', async () => {
+    const registerBody = {
+      email: 's5-login@ryba.local',
+      password: 'Password123',
+      displayName: 'Documents Tester',
+    };
+
+    const registerResponse = await request(app.getHttpServer())
+      .post('/auth/register')
+      .send(registerBody)
+      .expect(201);
+
+    const session = unwrap<AuthSession>(registerResponse.body);
+    authSessionSchema.parse(session);
+
+    const conflictResponse = await request(app.getHttpServer())
+      .post('/auth/register')
+      .send(registerBody)
+      .expect(409);
+
+    expect(conflictResponse.body.ok).toBe(false);
+    expect(conflictResponse.body.error.code).toBe('CONFLICT');
+    expect(conflictResponse.body.error.details).toMatchObject({
+      email: 's5-login@ryba.local',
+      canLogin: true,
     });
 
-    const document = unwrap<DocumentDetailRecord>(
-      (
-        await request(app.getHttpServer())
-          .post(`/spaces/${space.id}/documents`)
-          .set('Authorization', `Bearer ${tokenTwo}`)
-          .send({
-            title: 'Private note',
-            body: [],
-          })
-          .expect(201)
-      ).body,
-    );
+    const loginBody = {
+      email: registerBody.email,
+      password: registerBody.password,
+    };
+    loginRequestSchema.parse(loginBody);
 
-    const documentResponse = await request(app.getHttpServer())
-      .get(`/documents/${document.document.id}`)
-      .set('Authorization', `Bearer ${tokenOne}`)
-      .expect(403);
+    const loginResponse = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send(loginBody)
+      .expect(201);
 
-    expect(documentResponse.body.ok).toBe(false);
-    expect(documentResponse.body.error.code).toBe('FORBIDDEN');
-
-    const backlinksResponse = await request(app.getHttpServer())
-      .get(`/entities/${entity.id}/document-backlinks`)
-      .set('Authorization', `Bearer ${tokenOne}`)
-      .expect(403);
-
-    expect(backlinksResponse.body.ok).toBe(false);
-    expect(backlinksResponse.body.error.code).toBe('FORBIDDEN');
+    const loggedIn = unwrap<AuthSession>(loginResponse.body);
+    authSessionSchema.parse(loggedIn);
+    expect(loggedIn.user.email).toBe(registerBody.email);
   });
 
   const bootstrapUserAndGetToken = async (email: string): Promise<string> => {

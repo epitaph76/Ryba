@@ -16,6 +16,18 @@ import type {
 
 type ListResponse<TItem> = { items: TItem[] };
 
+class ApiRequestError extends Error {
+  code: string;
+  details?: unknown;
+
+  constructor(code: string, message: string, details?: unknown) {
+    super(`${code}: ${message}`);
+    this.name = 'ApiRequestError';
+    this.code = code;
+    this.details = details;
+  }
+}
+
 const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ??
   'http://localhost:3001';
@@ -37,10 +49,11 @@ async function request<TData>(
   const json = (await response.json()) as ApiEnvelope<TData>;
 
   if (!response.ok || !json.ok) {
-    const message = json.ok
-      ? `HTTP ${response.status}`
-      : `${json.error.code}: ${json.error.message}`;
-    throw new Error(message);
+    if (!json.ok) {
+      throw new ApiRequestError(json.error.code, json.error.message, json.error.details);
+    }
+
+    throw new Error(`HTTP ${response.status}`);
   }
 
   return json.data;
@@ -266,6 +279,16 @@ export const canvasApi = {
     );
   },
 
+  deleteEntity(token: string, entityId: string) {
+    return request<{ id: string }>(
+      `/entities/${entityId}`,
+      {
+        method: 'DELETE',
+      },
+      token,
+    );
+  },
+
   listDocuments(token: string, spaceId: string) {
     return request<ListResponse<DocumentRecord>>(
       `/spaces/${spaceId}/documents`,
@@ -296,6 +319,10 @@ export const canvasApi = {
     return request<DocumentDetailRecord>(`/documents/${documentId}`, { method: 'GET' }, token);
   },
 
+  getEntityDocument(token: string, entityId: string) {
+    return request<DocumentDetailRecord>(`/entities/${entityId}/document`, { method: 'GET' }, token);
+  },
+
   updateDocument(
     token: string,
     documentId: string,
@@ -318,6 +345,24 @@ export const canvasApi = {
     return request<ListResponse<DocumentBacklinkRecord>>(
       `/entities/${entityId}/document-backlinks`,
       { method: 'GET' },
+      token,
+    );
+  },
+
+  upsertEntityDocument(
+    token: string,
+    entityId: string,
+    input: {
+      title?: string;
+      body: DocumentRecord['body'];
+    },
+  ) {
+    return request<DocumentDetailRecord>(
+      `/entities/${entityId}/document`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(input),
+      },
       token,
     );
   },

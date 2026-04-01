@@ -32,7 +32,15 @@ export class AuthService {
     });
 
     if (existingUser) {
-      throw new ApiException(HttpStatus.CONFLICT, 'CONFLICT', 'User with this email already exists');
+      throw new ApiException(
+        HttpStatus.CONFLICT,
+        'CONFLICT',
+        'User with this email already exists',
+        {
+          email,
+          canLogin: true,
+        },
+      );
     }
 
     const passwordHash = await hash(payload.password, 12);

@@ -3,13 +3,10 @@ import type { MouseEvent as ReactMouseEvent } from 'react';
 import {
   Background,
   Controls,
-  Handle,
   MiniMap,
-  Position,
   ReactFlow,
   applyEdgeChanges,
   applyNodeChanges,
-  type Connection,
   type EdgeChange,
   type NodeChange,
   type NodeProps,
@@ -22,7 +19,6 @@ import type {
   CanvasStateRecord,
   DocumentBacklinkRecord,
   DocumentDetailRecord,
-  DocumentRecord,
   EntityRecord,
   EntityTypeFieldRecord,
   EntityTypeRecord,
@@ -52,17 +48,20 @@ import {
   type EntityDetailDraft,
   type EntityTypeDraft,
 } from './entity-detail-model';
-import { DocumentComposer } from './document-composer';
+import { EntityDocumentDialog } from './entity-document-dialog';
 import {
-  buildDocumentDraft,
-  createEmptyDocumentDraft,
   findMentionedEntities,
-  serializeDocumentDraft,
-  type DocumentDraft,
 } from './document-model';
+import {
+  buildEntityDocumentDraft,
+  buildEntityDocumentPayload,
+  getEntityDocumentOwnerEntityId,
+  isEntityOwnedDocument,
+} from './entity-document-model';
 import { getFieldOptions, type FieldEditorValue } from './field-renderers';
 
 const TOKEN_STORAGE_KEY = 'ryba_s3_access_token';
+const LAST_EMAIL_STORAGE_KEY = 'ryba_last_email';
 
 function EntityCardNode({ data, selected }: NodeProps<CanvasEntityNodeData>) {
   return (
@@ -75,8 +74,6 @@ function EntityCardNode({ data, selected }: NodeProps<CanvasEntityNodeData>) {
       <span className="canvas-node__id">{data.entityId}</span>
       {data.entityTypeName ? <span className="canvas-node__type">{data.entityTypeName}</span> : null}
       <p>{data.summary ?? 'Описание пока пустое. Открой инспектор, чтобы дополнить запись.'}</p>
-      <Handle type="target" position={Position.Left} className="canvas-node__handle" />
-      <Handle type="source" position={Position.Right} className="canvas-node__handle" />
     </article>
   );
 }
@@ -141,13 +138,14 @@ export function App() {
   const [entityDetailDraft, setEntityDetailDraft] = useState<EntityDetailDraft | null>(null);
   const [activeSchemaTypeId, setActiveSchemaTypeId] = useState('');
   const [entityTypeDraft, setEntityTypeDraft] = useState<EntityTypeDraft>(createEmptyEntityTypeDraft());
-  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
-  const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
   const [documentDetail, setDocumentDetail] = useState<DocumentDetailRecord | null>(null);
-  const [documentDraft, setDocumentDraft] = useState<DocumentDraft>(createEmptyDocumentDraft());
   const [documentBacklinks, setDocumentBacklinks] = useState<DocumentBacklinkRecord[]>([]);
+  const [documentEditorEntityId, setDocumentEditorEntityId] = useState<string | null>(null);
+  const [documentEditorDocumentId, setDocumentEditorDocumentId] = useState<string | null>(null);
+  const [documentEditorTitle, setDocumentEditorTitle] = useState('');
+  const [documentEditorBody, setDocumentEditorBody] = useState<DocumentDetailRecord['document']['body']>([]);
 
-  const [email, setEmail] = useState('demo@ryba.local');
+  const [email, setEmail] = useState(() => localStorage.getItem(LAST_EMAIL_STORAGE_KEY) ?? 'demo@ryba.local');
   const [password, setPassword] = useState('Password123');
   const [displayName, setDisplayName] = useState('Демо Ryba');
   const [workspaceName, setWorkspaceName] = useState('Рабочее пространство канвы');
@@ -156,20 +154,26 @@ export function App() {
   const [spaceSlug, setSpaceSlug] = useState('general');
   const [quickEntityTitle, setQuickEntityTitle] = useState('Новая сущность');
   const [quickEntitySummary, setQuickEntitySummary] = useState('Создано из канвы S3');
-  const [relationType, setRelationType] = useState('связано с');
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null;
   const selectedSpace = spaces.find((space) => space.id === selectedSpaceId) ?? null;
   const selectedEntity = entities.find((entity) => entity.id === selectedEntityId) ?? null;
-  const selectedDocument = documents.find((document) => document.id === selectedDocumentId) ?? null;
+  const documentEditorEntity =
+    entities.find((entity) => entity.id === documentEditorEntityId) ?? null;
   const selectedEntityType = getEntityTypeById(entityTypes, entityDetailDraft?.entityTypeId);
   const activeSchemaType = getEntityTypeById(entityTypes, activeSchemaTypeId || null);
-  const mentionedEntities = useMemo(() => {
-    if (documentDetail) {
-      return documentDetail.mentionedEntities;
+  const linkedDocumentEntities = useMemo(() => {
+    if (!documentEditorEntity) {
+      return [];
     }
 
-    return findMentionedEntities(documentDraft.body, entities).map((entity) => ({
+    if (documentDetail) {
+      return documentDetail.mentionedEntities.filter((item) => item.entityId !== documentEditorEntity.id);
+    }
+
+    return findMentionedEntities(documentEditorBody, entities)
+      .filter((entity) => entity.id !== documentEditorEntity.id)
+      .map((entity) => ({
       entityId: entity.id,
       label: entity.title,
       anchorId: null,
@@ -177,7 +181,14 @@ export function App() {
       summary: entity.summary,
       entityTypeId: entity.entityTypeId,
     }));
-  }, [documentDetail, documentDraft.body, entities]);
+  }, [documentDetail, documentEditorBody, documentEditorEntity, entities]);
+  const documentEditorDraft = useMemo(
+    () => ({
+      title: documentEditorTitle,
+      body: documentEditorBody,
+    }),
+    [documentEditorBody, documentEditorTitle],
+  );
 
   const relatedToSelectedEntity = useMemo(() => {
     if (!selectedEntity) {
@@ -196,10 +207,22 @@ export function App() {
     });
   };
 
+  const selectEntityOnCanvas = (entityId: string | null) => {
+    setSelectedEntityId(entityId);
+    setNodes((current) =>
+      current.map((item) => ({
+        ...item,
+        selected: item.id === entityId,
+      })),
+    );
+  };
+
   const syncSession = (session: AuthSession) => {
     localStorage.setItem(TOKEN_STORAGE_KEY, session.accessToken);
+    localStorage.setItem(LAST_EMAIL_STORAGE_KEY, session.user.email);
     setToken(session.accessToken);
     setCurrentUser(session.user);
+    setEmail(session.user.email);
     appendLog(`Вход выполнен: ${session.user.email}`);
   };
 
@@ -212,7 +235,6 @@ export function App() {
     setEntities([]);
     setEntityTypes([]);
     setRelations([]);
-    setDocuments([]);
     setNodes([]);
     setEdges([]);
     setEdgeLayouts([]);
@@ -220,13 +242,15 @@ export function App() {
     setSelectedWorkspaceId('');
     setSelectedSpaceId('');
     setSelectedEntityId(null);
-    setSelectedDocumentId(null);
     setActiveSchemaTypeId('');
     setEntityTypeDraft(createEmptyEntityTypeDraft());
     setEntityDetailDraft(null);
     setDocumentDetail(null);
-    setDocumentDraft(createEmptyDocumentDraft());
     setDocumentBacklinks([]);
+    setDocumentEditorEntityId(null);
+    setDocumentEditorDocumentId(null);
+    setDocumentEditorTitle('');
+    setDocumentEditorBody([]);
     setCanvasError(null);
     setLayoutDirty(false);
     appendLog('Сессия очищена');
@@ -267,7 +291,7 @@ export function App() {
     setEdges(graph.edges);
     setEdgeLayouts(nextCanvas.edges);
     setViewport(nextCanvas.viewport);
-    setSelectedEntityId(focusEntityId);
+    selectEntityOnCanvas(focusEntityId);
     setCanvasError(null);
     setLayoutDirty(false);
   };
@@ -302,30 +326,6 @@ export function App() {
     }
   };
 
-  const loadDocuments = async (activeToken: string, spaceId: string) => {
-    const response = await canvasApi.listDocuments(activeToken, spaceId);
-    setDocuments(response.items);
-    setSelectedDocumentId((current) => {
-      if (current && response.items.some((document) => document.id === current)) {
-        return current;
-      }
-
-      return response.items[0]?.id ?? null;
-    });
-  };
-
-  const loadDocumentDetail = async (activeToken: string, documentId: string) => {
-    setDocumentLoading(true);
-
-    try {
-      const detail = await canvasApi.getDocument(activeToken, documentId);
-      setDocumentDetail(detail);
-      setDocumentDraft(buildDocumentDraft(detail.document));
-    } finally {
-      setDocumentLoading(false);
-    }
-  };
-
   const loadCanvas = async (
     activeToken: string,
     spaceId: string,
@@ -348,6 +348,31 @@ export function App() {
       );
     } finally {
       setCanvasLoading(false);
+    }
+  };
+
+  const hydrateDocumentEditor = (detail: DocumentDetailRecord | null, entity: EntityRecord) => {
+    const draft = buildEntityDocumentDraft(entity, detail);
+
+    setDocumentDetail(detail);
+    setDocumentEditorDocumentId(detail?.document.id ?? null);
+    setDocumentEditorTitle(draft.title);
+    setDocumentEditorBody(draft.body);
+  };
+
+  const resolveEntityDocument = async (activeToken: string, entity: EntityRecord) => {
+    try {
+      const detail = await canvasApi.getEntityDocument(activeToken, entity.id);
+
+      return isEntityOwnedDocument(detail, entity.id) ? detail : null;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Не удалось загрузить документ';
+
+      if (message.startsWith('NOT_FOUND:')) {
+        return null;
+      }
+
+      throw error;
     }
   };
 
@@ -437,9 +462,22 @@ export function App() {
     }
 
     void withAction('Загрузка сессии', async () => {
-      const user = await canvasApi.me(token);
-      setCurrentUser(user);
-      await loadWorkspaces(token);
+      try {
+        const user = await canvasApi.me(token);
+        setCurrentUser(user);
+        setEmail(user.email);
+        await loadWorkspaces(token);
+      } catch (error) {
+        localStorage.removeItem(TOKEN_STORAGE_KEY);
+        setToken(null);
+        setCurrentUser(null);
+        setCanvasError(null);
+        appendLog(
+          error instanceof Error
+            ? `Сессия истекла: ${error.message}`
+            : 'Сессия истекла, войди снова',
+        );
+      }
     });
   }, [token]);
 
@@ -458,25 +496,23 @@ export function App() {
 
   useEffect(() => {
     if (!token || !selectedSpaceId) {
-      setDocuments([]);
-      setSelectedDocumentId(null);
       setDocumentDetail(null);
-      setDocumentDraft(createEmptyDocumentDraft());
+      setDocumentEditorDocumentId(null);
       return;
     }
 
-    void Promise.all([loadCanvas(token, selectedSpaceId), loadDocuments(token, selectedSpaceId)]);
+    void loadCanvas(token, selectedSpaceId);
   }, [selectedSpaceId, token]);
 
   useEffect(() => {
-    if (!token || !selectedDocumentId) {
+    if (!documentEditorEntityId) {
       setDocumentDetail(null);
-      setDocumentDraft(createEmptyDocumentDraft());
+      setDocumentEditorDocumentId(null);
+      setDocumentEditorTitle('');
+      setDocumentEditorBody([]);
       return;
     }
-
-    void loadDocumentDetail(token, selectedDocumentId);
-  }, [selectedDocumentId, token]);
+  }, [documentEditorEntityId]);
 
   useEffect(() => {
     if (!flowInstance || !canvasState) {
@@ -506,7 +542,7 @@ export function App() {
       .listDocumentBacklinks(token, selectedEntityId)
       .then((response) => setDocumentBacklinks(response.items))
       .catch((error) => {
-        const message = error instanceof Error ? error.message : 'Не удалось загрузить backlinks';
+        const message = error instanceof Error ? error.message : 'Не удалось загрузить обратные ссылки';
         appendLog(message);
         setDocumentBacklinks([]);
       });
@@ -521,7 +557,7 @@ export function App() {
       current.map((node) => {
         const entity = entities.find((item) => item.id === node.id);
         const nextTypeName = entity?.entityTypeId
-          ? entityTypes.find((item) => item.id === entity.entityTypeId)?.name ?? 'Typed record'
+          ? entityTypes.find((item) => item.id === entity.entityTypeId)?.name ?? 'Типизированная запись'
           : null;
 
         if (node.data.entityTypeName === nextTypeName) {
@@ -541,12 +577,42 @@ export function App() {
 
   const authenticateRegister = () =>
     withAction('Регистрация', async () => {
-      const session = await canvasApi.register({
-        email,
-        password,
-        displayName,
-      });
-      syncSession(session);
+      try {
+        const session = await canvasApi.register({
+          email,
+          password,
+          displayName,
+        });
+        syncSession(session);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Не удалось зарегистрироваться';
+        const canLogin =
+          typeof error === 'object' &&
+          error !== null &&
+          'details' in error &&
+          typeof (error as { details?: { canLogin?: unknown } }).details?.canLogin === 'boolean' &&
+          (error as { details?: { canLogin?: boolean } }).details?.canLogin === true;
+
+        if (canLogin || message.startsWith('CONFLICT:')) {
+          appendLog('Аккаунт уже существует, пробую выполнить вход.');
+          try {
+            const session = await canvasApi.login({
+              email,
+              password,
+            });
+            syncSession(session);
+          } catch (loginError) {
+            throw new Error(
+              loginError instanceof Error
+                ? `Аккаунт уже существует. Если это твой email, войди с прежним паролем: ${loginError.message}`
+                : 'Аккаунт уже существует. Войди с прежним паролем.',
+            );
+          }
+          return;
+        }
+
+        throw error;
+      }
     });
 
   const authenticateLogin = () =>
@@ -620,30 +686,6 @@ export function App() {
     });
   };
 
-  const handleConnect = (connection: Connection) => {
-    if (!token || !selectedSpaceId || !connection.source || !connection.target || busyLabel) {
-      return;
-    }
-
-    const sourceId = connection.source;
-    const targetId = connection.target;
-
-    if (sourceId === targetId) {
-      appendLog('Для связи нужны две разные сущности');
-      return;
-    }
-
-    void withAction('Создание связи', async () => {
-      await canvasApi.createRelation(token, selectedSpaceId, {
-        fromEntityId: sourceId,
-        toEntityId: targetId,
-        relationType,
-      });
-      appendLog(`Связь создана: ${relationType}`);
-      await loadCanvas(token, selectedSpaceId, targetId);
-    });
-  };
-
   const onNodesChange = (changes: NodeChange[]) => {
     setNodes((current) => applyNodeChanges(changes, current));
     if (changes.length > 0) {
@@ -654,6 +696,143 @@ export function App() {
   const onEdgesChange = (changes: EdgeChange[]) => {
     setEdges((current) => applyEdgeChanges(changes, current));
   };
+
+  const openEntityDocument = (entityId: string) => {
+    const entity = entities.find((item) => item.id === entityId);
+
+    if (!token || !entity) {
+      return;
+    }
+
+    selectEntityOnCanvas(entityId);
+    setDocumentEditorEntityId(entityId);
+    setDocumentLoading(true);
+
+    void withAction('Открытие документа', async () => {
+      try {
+        const detail = await resolveEntityDocument(token, entity);
+        hydrateDocumentEditor(detail, entity);
+      } finally {
+        setDocumentLoading(false);
+      }
+    });
+  };
+
+  const closeEntityDocument = () => {
+    setDocumentEditorEntityId(null);
+    setDocumentEditorDocumentId(null);
+    setDocumentDetail(null);
+    setDocumentEditorTitle('');
+    setDocumentEditorBody([]);
+    setDocumentLoading(false);
+  };
+
+  const saveEntityDocument = () =>
+    withAction('Сохранение документа', async () => {
+      if (!token || !selectedSpaceId || !documentEditorEntity) {
+        return;
+      }
+
+      const payload = buildEntityDocumentPayload(documentEditorEntity, {
+        title: documentEditorTitle,
+        body: documentEditorBody,
+      });
+
+      setDocumentSaveBusy(true);
+
+      try {
+        const detail = await canvasApi.upsertEntityDocument(token, documentEditorEntity.id, payload);
+
+        hydrateDocumentEditor(detail, documentEditorEntity);
+        appendLog(`Документ сохранён: ${detail.document.title}`);
+        await loadCanvas(token, selectedSpaceId, documentEditorEntity.id);
+
+        if (selectedEntityId === documentEditorEntity.id) {
+          const backlinks = await canvasApi.listDocumentBacklinks(token, documentEditorEntity.id);
+          setDocumentBacklinks(backlinks.items);
+        }
+      } finally {
+        setDocumentSaveBusy(false);
+      }
+    });
+
+  const deleteSelectedEntity = () =>
+    withAction('Удаление записи', async () => {
+      if (!token || !selectedSpaceId || !selectedEntityId) {
+        return;
+      }
+
+      const entityId = selectedEntityId;
+      await canvasApi.deleteEntity(token, entityId);
+      appendLog(`Запись удалена: ${entityId}`);
+
+      if (documentEditorEntityId === entityId) {
+        closeEntityDocument();
+      }
+
+      await loadCanvas(token, selectedSpaceId, null);
+      selectEntityOnCanvas(null);
+      setDocumentBacklinks([]);
+    });
+
+  const openDocumentFromBacklink = async (documentId: string) => {
+    if (!token) {
+      return;
+    }
+
+    void withAction('Открытие связанного документа', async () => {
+      setDocumentLoading(true);
+
+      try {
+        const detail = await canvasApi.getDocument(token, documentId);
+        const ownerEntityId = getEntityDocumentOwnerEntityId(detail);
+        const ownerEntity = ownerEntityId
+          ? entities.find((item) => item.id === ownerEntityId) ?? null
+          : null;
+
+        if (!ownerEntity) {
+          throw new Error('Не удалось определить запись, которой принадлежит документ');
+        }
+
+        selectEntityOnCanvas(ownerEntity.id);
+        setDocumentEditorEntityId(ownerEntity.id);
+        hydrateDocumentEditor(detail, ownerEntity);
+      } finally {
+        setDocumentLoading(false);
+      }
+    });
+  };
+
+  useEffect(() => {
+    localStorage.setItem(LAST_EMAIL_STORAGE_KEY, email);
+  }, [email]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Delete') {
+        return;
+      }
+
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName ?? '';
+      const isEditable =
+        tagName === 'INPUT' ||
+        tagName === 'TEXTAREA' ||
+        tagName === 'SELECT' ||
+        target?.isContentEditable === true;
+
+      if (isEditable || documentEditorEntityId || !selectedEntityId || !token || !selectedSpaceId || busyLabel) {
+        return;
+      }
+
+      event.preventDefault();
+      void deleteSelectedEntity();
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [busyLabel, documentEditorEntityId, selectedEntityId, selectedSpaceId, token]);
 
   const updateDetailDraft = (patch: Partial<EntityDetailDraft>) => {
     setEntityDetailDraft((current) => (current ? { ...current, ...patch } : current));
@@ -710,45 +889,6 @@ export function App() {
       }
     });
 
-  const startNewDocument = () => {
-    setSelectedDocumentId(null);
-    setDocumentDetail(null);
-    setDocumentDraft(createEmptyDocumentDraft());
-  };
-
-  const saveDocument = () =>
-    withAction('Сохранение документа', async () => {
-      if (!token || !selectedSpaceId) {
-        return;
-      }
-
-      const payload = serializeDocumentDraft(documentDraft);
-
-      if (!payload.title) {
-        throw new Error('Document title is required');
-      }
-
-      setDocumentSaveBusy(true);
-
-      try {
-        const detail = selectedDocumentId
-          ? await canvasApi.updateDocument(token, selectedDocumentId, payload)
-          : await canvasApi.createDocument(token, selectedSpaceId, payload);
-
-        setDocumentDetail(detail);
-        setDocumentDraft(buildDocumentDraft(detail.document));
-        setSelectedDocumentId(detail.document.id);
-        appendLog(
-          selectedDocumentId
-            ? `Документ обновлён: ${detail.document.title}`
-            : `Документ создан: ${detail.document.title}`,
-        );
-        await loadDocuments(token, selectedSpaceId);
-      } finally {
-        setDocumentSaveBusy(false);
-      }
-    });
-
   const startNewEntityType = () => {
     setActiveSchemaTypeId('');
     setEntityTypeDraft(createEmptyEntityTypeDraft());
@@ -801,7 +941,7 @@ export function App() {
       const payload = serializeEntityTypeDraft(entityTypeDraft);
 
       if (!payload.name || !payload.slug) {
-        throw new Error('Type name and slug are required');
+        throw new Error('Нужны название типа и slug');
       }
 
       setSchemaSaveBusy(true);
@@ -857,7 +997,7 @@ export function App() {
             value={typeof rawValue === 'string' ? rawValue : ''}
             onChange={(event) => setDetailFieldValue(field.key, event.target.value)}
           >
-            <option value="">Not set</option>
+            <option value="">Не задано</option>
             {options.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
@@ -875,7 +1015,7 @@ export function App() {
           <input
             type="text"
             value={toCommaSeparated(rawValue)}
-            placeholder="comma, separated, values"
+            placeholder="значение 1, значение 2"
             onChange={(event) => setDetailFieldValue(field.key, fromCommaSeparated(event.target.value))}
           />
         </label>
@@ -919,12 +1059,12 @@ export function App() {
     <main className="s3-app">
       <header className="s3-hero">
         <div className="s3-hero__copy">
-          <span className="eyebrow">Ryba S-5 documents and narrative layer</span>
-          <h1>Канва, записи и narrative в одном рабочем слое</h1>
+          <span className="eyebrow">Ryba S-5 документный слой</span>
+          <h1>Канва, записи и документы в одном рабочем слое</h1>
           <p>
             Теперь поверх сущностей и связей появился документный слой. Канва остаётся точкой
-            навигации, detail view управляет structured data, а документы связывают это с rich
-            text, mentions и backlinks.
+            навигации, панель деталей управляет структурированными данными, а документы связывают
+            это с текстом, упоминаниями и обратными ссылками.
           </p>
         </div>
         <div className="s3-hero__stats">
@@ -941,8 +1081,8 @@ export function App() {
             <strong>{layoutDirty ? 'не сохранён' : canvasState?.updatedAt ? 'сохранён' : 'по умолчанию'}</strong>
           </div>
           <div>
-            <span>Записи / документы</span>
-            <strong>{entities.length} / {documents.length}</strong>
+            <span>Записи / связи</span>
+            <strong>{entities.length} / {relations.length}</strong>
           </div>
         </div>
       </header>
@@ -954,6 +1094,10 @@ export function App() {
               <h2>Сессия</h2>
               <span>{currentUser?.email ?? 'гость'}</span>
             </div>
+            <p className="panel__hint">
+              Можно повторно использовать тот же email после перезапуска. Если аккаунт уже существует, регистрация
+              автоматически попробует сразу выполнить вход.
+            </p>
             <label className="field">
               <span>Почта</span>
               <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
@@ -976,7 +1120,7 @@ export function App() {
             </label>
             <div className="actions">
               <button type="button" className="button" disabled={!!busyLabel} onClick={authenticateRegister}>
-                Регистрация
+                Зарегистрироваться / войти
               </button>
               <button type="button" className="button button--ghost" disabled={!!busyLabel} onClick={authenticateLogin}>
                 Войти
@@ -989,17 +1133,17 @@ export function App() {
 
           <section className="panel">
             <div className="panel__header">
-              <h2>Schema layer</h2>
-              <span>{activeSchemaType ? activeSchemaType.slug : 'new type'}</span>
+              <h2>Слой схемы</h2>
+              <span>{activeSchemaType ? activeSchemaType.slug : 'новый тип'}</span>
             </div>
             <label className="field">
-              <span>Active type</span>
+              <span>Активный тип</span>
               <select
                 value={activeSchemaTypeId}
                 onChange={(event) => setActiveSchemaTypeId(event.target.value)}
                 disabled={!token || !selectedWorkspaceId || !!busyLabel || schemaSaveBusy}
               >
-                <option value="">New entity type</option>
+                <option value="">Новый тип сущности</option>
                 {entityTypes.map((entityType) => (
                   <option key={entityType.id} value={entityType.id}>
                     {entityType.name} ({entityType.slug})
@@ -1014,7 +1158,7 @@ export function App() {
                 onClick={startNewEntityType}
                 disabled={!token || !selectedWorkspaceId || !!busyLabel || schemaSaveBusy}
               >
-                New type
+                Новый тип
               </button>
               <button
                 type="button"
@@ -1022,11 +1166,11 @@ export function App() {
                 onClick={saveSchemaLayer}
                 disabled={!token || !selectedWorkspaceId || !!busyLabel || schemaSaveBusy}
               >
-                {schemaSaveBusy ? 'Saving...' : 'Save type'}
+                {schemaSaveBusy ? 'Сохраняю...' : 'Сохранить тип'}
               </button>
             </div>
             <label className="field">
-              <span>Type name</span>
+              <span>Название типа</span>
               <input
                 type="text"
                 value={entityTypeDraft.name}
@@ -1042,7 +1186,7 @@ export function App() {
               />
             </label>
             <label className="field">
-              <span>Description</span>
+              <span>Описание</span>
               <textarea
                 rows={2}
                 value={entityTypeDraft.description}
@@ -1050,7 +1194,7 @@ export function App() {
               />
             </label>
             <label className="field">
-              <span>Color token</span>
+              <span>Цветовой токен</span>
               <input
                 type="text"
                 value={entityTypeDraft.color}
@@ -1058,7 +1202,7 @@ export function App() {
               />
             </label>
             <label className="field">
-              <span>Icon</span>
+              <span>Иконка</span>
               <input
                 type="text"
                 value={entityTypeDraft.icon}
@@ -1069,7 +1213,7 @@ export function App() {
               {entityTypeDraft.fields.map((field, index) => (
                 <div className="schema-field-row" key={`${field.key}-${index}`}>
                   <label className="field">
-                    <span>Label</span>
+                    <span>Подпись</span>
                     <input
                       type="text"
                       value={field.label}
@@ -1077,7 +1221,7 @@ export function App() {
                     />
                   </label>
                   <label className="field">
-                    <span>Key</span>
+                    <span>Ключ</span>
                     <input
                       type="text"
                       value={field.key}
@@ -1085,7 +1229,7 @@ export function App() {
                     />
                   </label>
                   <label className="field">
-                    <span>Type</span>
+                    <span>Тип поля</span>
                     <select
                       value={field.fieldType}
                       onChange={(event) =>
@@ -1108,7 +1252,7 @@ export function App() {
                     </select>
                   </label>
                   <label className="field">
-                    <span>Options (comma separated)</span>
+                    <span>Варианты (через запятую)</span>
                     <input
                       type="text"
                       value={field.optionsText}
@@ -1118,7 +1262,7 @@ export function App() {
                     />
                   </label>
                   <label className="field">
-                    <span>Description</span>
+                    <span>Описание</span>
                     <input
                       type="text"
                       value={field.description}
@@ -1128,7 +1272,7 @@ export function App() {
                     />
                   </label>
                   <label className="field">
-                    <span>Relation type id</span>
+                    <span>ID типа связи</span>
                     <input
                       type="text"
                       value={field.relationEntityTypeId}
@@ -1147,7 +1291,7 @@ export function App() {
                         updateSchemaField(index, { required: event.target.checked })
                       }
                     />
-                    <span>Required</span>
+                    <span>Обязательное</span>
                   </label>
                   <label className="checkbox-field">
                     <input
@@ -1157,14 +1301,14 @@ export function App() {
                         updateSchemaField(index, { allowMultiple: event.target.checked })
                       }
                     />
-                    <span>Allow multiple</span>
+                    <span>Разрешить несколько значений</span>
                   </label>
                   <button
                     type="button"
                     className="button button--ghost"
                     onClick={() => removeSchemaField(index)}
                   >
-                    Remove field
+                    Удалить поле
                   </button>
                 </div>
               ))}
@@ -1175,7 +1319,7 @@ export function App() {
               onClick={addSchemaField}
               disabled={!token || !selectedWorkspaceId || !!busyLabel || schemaSaveBusy}
             >
-              Add field
+              Добавить поле
             </button>
           </section>
 
@@ -1295,14 +1439,6 @@ export function App() {
                 onChange={(event) => setQuickEntitySummary(event.target.value)}
               />
             </label>
-            <label className="field">
-              <span>Тип связи для соединения</span>
-              <input
-                type="text"
-                value={relationType}
-                onChange={(event) => setRelationType(event.target.value)}
-              />
-            </label>
             <div className="actions">
               <button type="button" className="button" disabled={!token || !selectedSpaceId || !!busyLabel} onClick={quickCreateCenteredEntity}>
                 Добавить в центр
@@ -1312,132 +1448,30 @@ export function App() {
               </button>
             </div>
             <p className="panel__hint">
-              Дважды кликни по канве, чтобы поставить новую сущность. Соедини хендлы двух узлов,
-              чтобы создать связь.
+              Дважды кликни по пустой области канвы, чтобы создать сущность. Дважды кликни по ноде, чтобы открыть
+              документ на весь экран. Ссылки вставляются через список сущностей и кнопку вставки ссылки в редакторе, а связи появляются после
+              сохранения документа.
             </p>
           </section>
 
           <section className="panel">
             <div className="panel__header">
-              <h2>Documents</h2>
-              <span>{selectedDocument ? selectedDocument.title : `${documents.length} total`}</span>
-            </div>
-            <div className="document-panel">
-              <div className="document-panel__actions">
-                <button
-                  type="button"
-                  className="button"
-                  disabled={!token || !selectedSpaceId || !!busyLabel}
-                  onClick={startNewDocument}
-                >
-                  Новый документ
-                </button>
-                <button
-                  type="button"
-                  className="button button--ghost"
-                  disabled={!token || !selectedSpaceId || !!busyLabel}
-                  onClick={() =>
-                    token && selectedSpaceId && void withAction('Обновление документов', () => loadDocuments(token, selectedSpaceId))
-                  }
-                >
-                  Обновить
-                </button>
-              </div>
-
-              <div className="document-list">
-                {documents.length === 0 ? (
-                  <p className="panel__hint">
-                    Пока нет документов. Создай первый narrative-слой для текущего пространства.
-                  </p>
-                ) : (
-                  documents.map((document) => (
-                    <button
-                      key={document.id}
-                      type="button"
-                      className={`document-list__item${document.id === selectedDocumentId ? ' is-active' : ''}`}
-                      onClick={() => setSelectedDocumentId(document.id)}
-                    >
-                      <strong>{document.title}</strong>
-                      <span>{document.previewText || 'Пустой документ'}</span>
-                    </button>
-                  ))
-                )}
-              </div>
-
-              <DocumentComposer
-                title={documentDraft.title}
-                body={documentDraft.body}
-                entities={entities}
-                disabled={!token || !selectedSpaceId || !!busyLabel}
-                onTitleChange={(value) =>
-                  setDocumentDraft((current) => ({
-                    ...current,
-                    title: value,
-                  }))
-                }
-                onBodyChange={(value) =>
-                  setDocumentDraft((current) => ({
-                    ...current,
-                    body: value,
-                  }))
-                }
-              />
-
-              <button
-                type="button"
-                className="button button--full"
-                disabled={!token || !selectedSpaceId || !!busyLabel || documentSaveBusy}
-                onClick={saveDocument}
-              >
-                {documentSaveBusy ? 'Saving...' : selectedDocumentId ? 'Save document' : 'Create document'}
-              </button>
-
-              <div className="document-preview-list">
-                <div className="panel__header">
-                  <h2>Linked entities</h2>
-                  <span>{mentionedEntities.length}</span>
-                </div>
-                {documentLoading ? (
-                  <p className="panel__hint">Загружаю документ и его связи...</p>
-                ) : mentionedEntities.length === 0 ? (
-                  <p className="panel__hint">
-                    Вставь mention из тулбара, чтобы документ начал ссылаться на сущности.
-                  </p>
-                ) : (
-                  mentionedEntities.map((item) => (
-                    <button
-                      key={item.entityId}
-                      type="button"
-                      className="entity-preview-card"
-                      onClick={() => setSelectedEntityId(item.entityId)}
-                    >
-                      <strong>{item.title}</strong>
-                      <span>{item.summary ?? item.label ?? 'Без описания'}</span>
-                    </button>
-                  ))
-                )}
-              </div>
-            </div>
-          </section>
-
-          <section className="panel">
-            <div className="panel__header">
-              <h2>Detail view</h2>
-              <span>{selectedEntity ? selectedEntity.title : 'nothing selected'}</span>
+              <h2>Детали записи</h2>
+              <span>{selectedEntity ? selectedEntity.title : 'ничего не выбрано'}</span>
             </div>
             {selectedEntity && entityDetailDraft ? (
               <div className="detail-form">
                 <div className="detail-form__meta">
                   <strong>{selectedEntity.id}</strong>
-                  <span>{relatedToSelectedEntity.length} relations</span>
+                  <span>{relatedToSelectedEntity.length} связей</span>
                 </div>
                 <label className="field">
-                  <span>Entity type</span>
+                  <span>Тип сущности</span>
                   <select
                     value={entityDetailDraft.entityTypeId ?? ''}
                     onChange={(event) => handleDetailEntityTypeChange(event.target.value)}
                   >
-                    <option value="">Untyped</option>
+                    <option value="">Без типа</option>
                     {entityTypes.map((entityType) => (
                       <option key={entityType.id} value={entityType.id}>
                         {entityType.name}
@@ -1446,7 +1480,7 @@ export function App() {
                   </select>
                 </label>
                 <label className="field">
-                  <span>Title</span>
+                  <span>Заголовок</span>
                   <input
                     type="text"
                     value={entityDetailDraft.title}
@@ -1454,7 +1488,7 @@ export function App() {
                   />
                 </label>
                 <label className="field">
-                  <span>Summary</span>
+                  <span>Краткое описание</span>
                   <textarea
                     rows={3}
                     value={entityDetailDraft.summary}
@@ -1473,7 +1507,7 @@ export function App() {
                       ))
                   ) : (
                     <p className="panel__hint">
-                      This record has no typed fields yet. Select a type or add fields in schema layer.
+                      У этой записи пока нет типизированных полей. Выбери тип или добавь их в слое схемы.
                     </p>
                   )}
                 </div>
@@ -1483,11 +1517,11 @@ export function App() {
                   onClick={saveEntityDetail}
                   disabled={!token || !selectedSpaceId || !!busyLabel || entitySaveBusy}
                 >
-                  {entitySaveBusy ? 'Saving...' : 'Save record'}
+                  {entitySaveBusy ? 'Сохраняю...' : 'Сохранить запись'}
                 </button>
                 <div className="document-preview-list">
                   <div className="panel__header">
-                    <h2>Backlinks</h2>
+                    <h2>Обратные ссылки</h2>
                     <span>{documentBacklinks.length}</span>
                   </div>
                   {documentBacklinks.length === 0 ? (
@@ -1500,7 +1534,7 @@ export function App() {
                         key={`${backlink.documentId}-${backlink.anchorId ?? 'root'}`}
                         type="button"
                         className="entity-preview-card"
-                        onClick={() => setSelectedDocumentId(backlink.documentId)}
+                        onClick={() => void openDocumentFromBacklink(backlink.documentId)}
                       >
                         <strong>{backlink.documentTitle}</strong>
                         <span>{backlink.previewText}</span>
@@ -1511,7 +1545,7 @@ export function App() {
               </div>
             ) : (
               <p className="panel__hint">
-                Select any canvas node to open and edit entity detail.
+                Выбери ноду на канве, чтобы открыть данные сущности. Двойной клик по ноде открывает её документ.
               </p>
             )}
           </section>
@@ -1532,14 +1566,14 @@ export function App() {
 
         <section className="canvas-stage">
           <div className="canvas-toolbar">
-            <div>
+            <div className="canvas-toolbar__copy">
               <strong>{selectedSpace?.name ?? 'Выбери пространство'}</strong>
               <span>
                 {canvasLoading
                   ? 'Загрузка канвы...'
                   : selectedSpace
-                    ? 'Перетаскивай карточки, соединяй хендлы и сохраняй макет, когда он тебя устроит.'
-                    : 'Создай пространство или выбери существующее, чтобы открыть канву S3.'}
+                    ? 'Перетаскивай карточки, открывай документы двойным кликом и связывай сущности через ссылки внутри текста.'
+                    : 'Создай пространство или выбери существующее, чтобы открыть канву.'}
               </span>
             </div>
             <div className="canvas-toolbar__actions">
@@ -1586,7 +1620,6 @@ export function App() {
                 onInit={setFlowInstance}
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
-                onConnect={handleConnect}
                 onMoveEnd={(_, nextViewport) => {
                   setViewport({
                     zoom: nextViewport.zoom,
@@ -1598,13 +1631,10 @@ export function App() {
                   setLayoutDirty(true);
                 }}
                 onNodeClick={(_, node) => {
-                  setSelectedEntityId(node.id);
-                  setNodes((current) =>
-                    current.map((item) => ({
-                      ...item,
-                      selected: item.id === node.id,
-                    })),
-                  );
+                  selectEntityOnCanvas(node.id);
+                }}
+                onNodeDoubleClick={(_, node) => {
+                  openEntityDocument(node.id);
                 }}
                 onNodeDragStop={() => {
                   setLayoutDirty(true);
@@ -1624,6 +1654,26 @@ export function App() {
           </div>
         </section>
       </section>
+      <EntityDocumentDialog
+        open={!!documentEditorEntity}
+        entity={documentEditorEntity}
+        draft={documentEditorDraft}
+        entities={entities}
+        linkedEntities={linkedDocumentEntities}
+        backlinks={documentBacklinks}
+        loading={documentLoading}
+        saving={documentSaveBusy}
+        busy={!token || !selectedSpaceId || !!busyLabel}
+        onClose={closeEntityDocument}
+        onSave={() => void saveEntityDocument()}
+        onOpenEntity={(entityId) => {
+          openEntityDocument(entityId);
+        }}
+        onDraftChange={(draft) => {
+          setDocumentEditorTitle(draft.title);
+          setDocumentEditorBody(draft.body);
+        }}
+      />
     </main>
   );
 }

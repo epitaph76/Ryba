@@ -389,6 +389,7 @@ export const documentRecordSchema = z.object({
   id: idSchema,
   workspaceId: idSchema,
   spaceId: idSchema,
+  entityId: idSchema,
   title: z.string().trim().min(1).max(200),
   body: z.array(documentBlockSchema),
   previewText: z.string().max(4000),
@@ -409,12 +410,19 @@ export const documentEntityPreviewSchema = z.object({
 
 export const documentDetailRecordSchema = z.object({
   document: documentRecordSchema,
+  entity: z.object({
+    id: idSchema,
+    title: z.string().trim().min(1).max(200),
+    summary: z.string().max(4000).nullable(),
+    entityTypeId: idSchema.nullable(),
+  }),
   mentions: z.array(documentEntityReferenceSchema),
   mentionedEntities: z.array(documentEntityPreviewSchema),
 });
 
 export const documentBacklinkRecordSchema = z.object({
   entityId: idSchema,
+  sourceEntityId: idSchema,
   documentId: idSchema,
   documentTitle: z.string().trim().min(1).max(200),
   label: z.string().nullable(),
@@ -427,6 +435,15 @@ export const createDocumentRequestSchema = z.object({
   title: z.string().trim().min(1).max(200),
   body: z.array(documentBlockSchema).default([]),
 });
+
+export const upsertEntityDocumentRequestSchema = z
+  .object({
+    title: z.string().trim().min(1).max(200).optional(),
+    body: z.array(documentBlockSchema).default([]),
+  })
+  .refine((value) => value.title !== undefined || value.body !== undefined, {
+    message: 'At least one field must be provided',
+  });
 
 export const updateDocumentRequestSchema = z
   .object({
