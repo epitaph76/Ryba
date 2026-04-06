@@ -9,6 +9,7 @@ import { EntityTypesModule } from './entity-types/entity-types.module';
 import { HealthController } from './health.controller';
 import { RelationsModule } from './relations/relations.module';
 import { SpacesModule } from './spaces/spaces.module';
+import { ViewsModule } from './views/views.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
 
 @Module({
@@ -19,6 +20,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     DocumentsModule,
     WorkspacesModule,
     SpacesModule,
+    ViewsModule,
     EntityTypesModule,
     EntitiesModule,
     RelationsModule,

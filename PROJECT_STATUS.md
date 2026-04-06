@@ -59,7 +59,7 @@
 | S-3 | Базовая канва | `done` | Реализована рабочая canvas-линза поверх реальных entities и relations с persistence layout и автотестами |
 | S-4 | Entity detail и schema layer | `done` | Введены entity types, field definitions, валидация значений и завершённый detail/schema слой с backend, web и тестовой интеграцией |
 | S-5 | Documents и narrative layer | `done` | Реализован entity-backed document layer с fullscreen editor, mentions -> auto-relations, backlinks и narrative-контекстом |
-| S-6 | Tables и saved views | `planned` | Должны появиться структурированные рабочие представления |
+| S-6 | Tables и saved views | `done` | Реализованы table/list lenses, saved view persistence, виртуализация и тестовое покрытие этапа |
 | S-7 | Groups как subspaces | `planned` | Должна появиться ключевая фича подпространств |
 | S-8 | Permissions и activity | `planned` | Должна появиться базовая многопользовательская пригодность |
 | S-9 | Realtime collaboration | `planned` | Должно появиться совместное редактирование документов |
@@ -69,7 +69,7 @@
 
 ## Текущее состояние на сейчас
 
-На текущий момент завершены шесть шагов: стартовый инфраструктурный bootstrap (S-0), техническая разведка (S-1), core domain + backend skeleton (S-2), базовая канва поверх реальных данных (S-3), entity detail + schema layer (S-4) и documents + narrative layer (S-5).
+На текущий момент завершены семь шагов: стартовый инфраструктурный bootstrap (S-0), техническая разведка (S-1), core domain + backend skeleton (S-2), базовая канва поверх реальных данных (S-3), entity detail + schema layer (S-4), documents + narrative layer (S-5) и tables + saved views (S-6).
 
 ### Что уже сделано
 
@@ -115,10 +115,15 @@
 - в editor дочерняя ссылка показывает родительский текст как display-значение, но при клике раскрывается обратно в ключ, так что редактируется именно ссылка, а не её копия;
 - на канве `document_link` теперь рисуется дугой от документа-родителя к документу-потребителю, чтобы направление связи читалось визуально;
 - добавлен `docs/S5_DOCUMENTS_NARRATIVE_LAYER_IMPLEMENTATION.md` с фиксацией реализации этапа.
+- в PostgreSQL добавлена таблица `saved_views`, а в shared-контрактах появились типы и схемы `SavedViewConfig` / `SavedViewRecord`;
+- в `apps/api` добавлены `GET/POST /spaces/:spaceId/saved-views`, `PATCH /saved-views/:savedViewId` и `DELETE /saved-views/:savedViewId` с валидацией конфигурации и cross-workspace ограничениями;
+- в `apps/web` поверх того же space встроены table/list lenses с фильтрами, сортировкой, настройкой колонок, saved views и виртуализацией длинных наборов;
+- выбор строки из таблицы или списка использует уже существующую detail side panel, поэтому запись можно открыть без ухода из контекста выборки;
+- добавлены S-6 автотесты и документ `docs/S6_TABLES_SAVED_VIEWS_IMPLEMENTATION.md`.
 
 ### Что это означает
 
-Это означает, что репозиторий уже содержит не только core-доменную базу, но и несколько рабочих слоёв поверх неё: канва больше не является демкой, типизированный S-4 слой уже оформлен, а поверх сущностей появился рабочий narrative/document слой.
+Это означает, что репозиторий уже содержит не только core-доменную базу, но и несколько рабочих слоёв поверх неё: канва больше не является демкой, типизированный S-4 слой уже оформлен, поверх сущностей появился рабочий narrative/document слой, а теперь и S-6 table layer с сохранёнными представлениями живёт на том же источнике истины.
 
 ### Что это ещё не означает
 
@@ -131,10 +136,10 @@
 - групп как subspaces;
 - permission model;
 - production-grade collaboration layer;
-- tables/saved views, groups/subspaces и permission model как завершённых рабочих продуктовых слоёв.
+- groups/subspaces и permission model как завершённых рабочих продуктовых слоёв.
 
 То есть продукт как система ещё не построен.
-Построены стартовый каркас, технические прототипы, рабочее S-2 доменное ядро, базовая S-3 канва, завершённый S-4 слой типов сущностей и полей, а также S-5 документный слой с narrative-контекстом вокруг сущностей.
+Построены стартовый каркас, технические прототипы, рабочее S-2 доменное ядро, базовая S-3 канва, завершённый S-4 слой типов сущностей и полей, S-5 документный слой с narrative-контекстом вокруг сущностей, а также S-6 структурированные представления с saved views.
 
 ---
 
@@ -677,7 +682,7 @@
 
 ## S-6. Tables и Saved Views
 
-**Статус:** `planned`
+**Статус:** `done`
 
 ### Цель
 
@@ -733,6 +738,14 @@
 - saved view persistence;
 - list view;
 - виртуализация для длинных данных.
+
+### Что уже закрыто в рамках этапа
+
+- table и list view встроены в основной экран `space` и работают поверх реальных `entities` и `entity types`;
+- фильтры, сортировка, скрытие и порядок колонок живут как часть одного `StructuredViewDraft`, который можно сохранить и восстановить;
+- saved views сохраняются на backend, восстанавливаются после перезагрузки и валидируются относительно `space` и `workspace`;
+- выбор строки из table/list lens открывает уже существующую detail side panel, так что S-4 слой переиспользуется, а не дублируется;
+- этап покрыт `apps/api/test/s6.integration.test.ts`, `apps/web/src/table-model.test.ts`, а также проходит `web build` и `typecheck`.
 
 ### Сценарии использования фич этапа
 
@@ -1673,11 +1686,11 @@ CRM появился как прикладной сценарий, не разр
 
 Ближайший правильный ход:
 
-1. перейти к S-6 tables и saved views;
-2. использовать уже готовые S-4 detail/schema слой и S-5 document layer как опору для tabular workflows и saved views;
-3. сохранить связь между table lens и core entities без параллельного источника истины вне основной доменной модели;
-4. оставить Docker-first workflow и расширять smoke/integration coverage по мере роста table layer;
-5. не раздувать S-6 в spreadsheet или BI-платформу раньше, чем этого потребует реальный продуктовый сценарий.
+1. перейти к S-7 groups как subspaces;
+2. использовать уже готовые S-3 canvas, S-5 document layer и S-6 table layer как базу для локальных подпространств;
+3. сохранить принцип одного источника истины: group должен переиспользовать те же entities, documents и views, а не плодить параллельную модель;
+4. расширять smoke/integration coverage уже вокруг group-контекста, не ломая текущий Docker-first workflow;
+5. не превращать S-7 в произвольную иерархию вложенных workspace раньше, чем будет закрыт конкретный сценарий subspace-внутри-space.
 
 ## Главный контрольный вопрос проекта
 

@@ -265,6 +265,43 @@ export const documents = pgTable(
   }),
 );
 
+export const savedViews = pgTable(
+  'saved_views',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    spaceId: text('space_id')
+      .notNull()
+      .references(() => spaces.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    description: text('description'),
+    entityTypeId: text('entity_type_id').references(() => entityTypes.id, { onDelete: 'set null' }),
+    viewType: text('view_type').notNull(),
+    config: jsonb('config')
+      .notNull()
+      .default(sql`'{"filters":[],"sort":[],"columns":[]}'::jsonb`),
+    createdByUserId: text('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    updatedByUserId: text('updated_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { mode: 'string', withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { mode: 'string', withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    workspaceIdx: index('saved_views_workspace_idx').on(table.workspaceId),
+    spaceIdx: index('saved_views_space_idx').on(table.spaceId),
+    entityTypeIdx: index('saved_views_entity_type_idx').on(table.entityTypeId),
+  }),
+);
+
 export const documentEntityMentions = pgTable(
   'document_entity_mentions',
   {

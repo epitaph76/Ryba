@@ -274,6 +274,110 @@ export const listRelationsResponseSchema = z.object({
   items: z.array(relationRecordSchema),
 });
 
+export const savedViewFieldSourceSchema = z.enum(['system', 'property']);
+
+export const savedViewColumnConfigSchema = z.object({
+  key: z.string().trim().min(1).max(120),
+  source: savedViewFieldSourceSchema,
+  visible: z.boolean(),
+  width: z.number().int().positive().nullable(),
+});
+
+export const savedViewFilterOperatorSchema = z.enum([
+  'contains',
+  'equals',
+  'not_equals',
+  'gt',
+  'gte',
+  'lt',
+  'lte',
+  'is_empty',
+  'is_not_empty',
+]);
+
+export const savedViewFilterValueSchema = z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.array(z.string()),
+  z.null(),
+]);
+
+export const savedViewFilterConfigSchema = z.object({
+  id: idSchema,
+  key: z.string().trim().min(1).max(120),
+  source: savedViewFieldSourceSchema,
+  operator: savedViewFilterOperatorSchema,
+  value: savedViewFilterValueSchema,
+});
+
+export const savedViewSortDirectionSchema = z.enum(['asc', 'desc']);
+
+export const savedViewSortConfigSchema = z.object({
+  key: z.string().trim().min(1).max(120),
+  source: savedViewFieldSourceSchema,
+  direction: savedViewSortDirectionSchema,
+});
+
+export const savedViewConfigSchema = z.object({
+  filters: z.array(savedViewFilterConfigSchema).default([]),
+  sort: z.array(savedViewSortConfigSchema).default([]),
+  columns: z.array(savedViewColumnConfigSchema).default([]),
+});
+
+export const savedViewTypeSchema = z.enum(['table', 'list']);
+
+export const savedViewRecordSchema = z.object({
+  id: idSchema,
+  workspaceId: idSchema,
+  spaceId: idSchema,
+  name: z.string().trim().min(1).max(120),
+  description: z.string().max(4000).nullable(),
+  entityTypeId: idSchema.nullable(),
+  viewType: savedViewTypeSchema,
+  config: savedViewConfigSchema,
+  createdByUserId: idSchema,
+  updatedByUserId: idSchema,
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+});
+
+export const createSavedViewRequestSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  description: z.string().max(4000).nullable().optional(),
+  entityTypeId: idSchema.nullable().optional(),
+  viewType: savedViewTypeSchema,
+  config: savedViewConfigSchema,
+});
+
+export const updateSavedViewRequestSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120).optional(),
+    description: z.string().max(4000).nullable().optional(),
+    entityTypeId: idSchema.nullable().optional(),
+    viewType: savedViewTypeSchema.optional(),
+    config: savedViewConfigSchema.optional(),
+  })
+  .refine(
+    (value) =>
+      value.name !== undefined ||
+      value.description !== undefined ||
+      value.entityTypeId !== undefined ||
+      value.viewType !== undefined ||
+      value.config !== undefined,
+    {
+      message: 'At least one field must be provided',
+    },
+  );
+
+export const savedViewIdParamsSchema = z.object({
+  savedViewId: idSchema,
+});
+
+export const listSavedViewsResponseSchema = z.object({
+  items: z.array(savedViewRecordSchema),
+});
+
 export const entityTypeFieldInputSchema = z.object({
   id: idSchema.optional(),
   key: fieldKeySchema,

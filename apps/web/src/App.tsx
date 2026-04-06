@@ -26,6 +26,7 @@ import type {
   EntityTypeFieldRecord,
   EntityTypeRecord,
   RelationRecord,
+  SavedViewRecord,
   SpaceRecord,
   UserRecord,
   WorkspaceRecord,
@@ -63,6 +64,14 @@ import {
   isEntityOwnedDocument,
 } from './entity-document-model';
 import { getFieldOptions, type FieldEditorValue } from './field-renderers';
+import { TableView } from './components/TableView';
+import {
+  buildDraftFromSavedView,
+  createDefaultTableDraft,
+  serializeStructuredViewDraft,
+  syncStructuredViewDraft,
+  type StructuredViewDraft,
+} from './table-model';
 
 const TOKEN_STORAGE_KEY = 'ryba_s3_access_token';
 const LAST_EMAIL_STORAGE_KEY = 'ryba_last_email';
@@ -165,6 +174,11 @@ export function App() {
   const [documentEditorTitle, setDocumentEditorTitle] = useState('');
   const [documentEditorBody, setDocumentEditorBody] = useState<DocumentDetailRecord['document']['body']>([]);
   const [spaceDocuments, setSpaceDocuments] = useState<DocumentRecord[]>([]);
+  const [savedViews, setSavedViews] = useState<SavedViewRecord[]>([]);
+  const [activeSavedViewId, setActiveSavedViewId] = useState<string | null>(null);
+  const [tableLensDraft, setTableLensDraft] = useState<StructuredViewDraft>(() =>
+    createDefaultTableDraft([]),
+  );
 
   const [email, setEmail] = useState(() => localStorage.getItem(LAST_EMAIL_STORAGE_KEY) ?? 'demo@ryba.local');
   const [password, setPassword] = useState('Password123');
@@ -298,6 +312,9 @@ export function App() {
     setDocumentEditorTitle('');
     setDocumentEditorBody([]);
     setSpaceDocuments([]);
+    setSavedViews([]);
+    setActiveSavedViewId(null);
+    setTableLensDraft(createDefaultTableDraft([]));
     setCanvasError(null);
     setSessionFeedback({
       tone: 'info',
@@ -359,6 +376,7 @@ export function App() {
   const loadEntityTypes = async (activeToken: string, workspaceId: string) => {
     const response = await canvasApi.listEntityTypes(activeToken, workspaceId);
     setEntityTypes(response.items);
+    setTableLensDraft((current) => syncStructuredViewDraft(current, response.items));
     setActiveSchemaTypeId((current) => {
       if (current && response.items.some((entityType) => entityType.id === current)) {
         return current;
@@ -383,6 +401,15 @@ export function App() {
     return response.items;
   };
 
+  const loadSavedViews = async (activeToken: string, spaceId: string) => {
+    const response = await canvasApi.listSavedViews(activeToken, spaceId);
+    setSavedViews(response.items);
+    setActiveSavedViewId((current) =>
+      current && response.items.some((savedView) => savedView.id === current) ? current : null,
+    );
+    return response.items;
+  };
+
   const loadCanvas = async (
     activeToken: string,
     spaceId: string,
@@ -395,6 +422,7 @@ export function App() {
         canvasApi.listEntities(activeToken, spaceId),
         canvasApi.listRelations(activeToken, spaceId),
         canvasApi.getCanvas(activeToken, spaceId),
+        loadSavedViews(activeToken, spaceId),
         loadDocuments(activeToken, spaceId),
       ]);
 
@@ -672,11 +700,31 @@ export function App() {
       setDocumentDetail(null);
       setDocumentEditorDocumentId(null);
       setSpaceDocuments([]);
+      setSavedViews([]);
+      setActiveSavedViewId(null);
+      setTableLensDraft(createDefaultTableDraft(entityTypes));
       return;
     }
 
+    setSavedViews([]);
+    setActiveSavedViewId(null);
+    setTableLensDraft((current) => createDefaultTableDraft(entityTypes, current.viewType));
     void loadCanvas(token, selectedSpaceId);
   }, [selectedSpaceId, token]);
+
+  useEffect(() => {
+    if (!activeSavedViewId) {
+      return;
+    }
+
+    const savedView = savedViews.find((view) => view.id === activeSavedViewId);
+
+    if (!savedView) {
+      return;
+    }
+
+    setTableLensDraft(buildDraftFromSavedView(savedView, entityTypes));
+  }, [activeSavedViewId, entityTypes, savedViews]);
 
   useEffect(() => {
     if (!documentEditorEntityId) {
@@ -876,6 +924,85 @@ export function App() {
     withAction('Создание сущности', async () => {
       await createEntityAtPosition(getCanvasCenterPosition(), 'панели');
     });
+
+  const resetTableLensDraft = (viewType: StructuredViewDraft['viewType'] = tableLensDraft.viewType) => {
+    setActiveSavedViewId(null);
+    setTableLensDraft(createDefaultTableDraft(entityTypes, viewType));
+  };
+
+  const selectSavedView = (savedViewId: string | null) => {
+    if (!savedViewId) {
+      resetTableLensDraft();
+      return;
+    }
+
+    const savedView = savedViews.find((view) => view.id === savedViewId);
+
+    if (!savedView) {
+      resetTableLensDraft();
+      return;
+    }
+
+    setActiveSavedViewId(savedView.id);
+    setTableLensDraft(buildDraftFromSavedView(savedView, entityTypes));
+  };
+
+  const createSavedView = async (payload: {
+    name: string;
+    description?: string | null;
+    entityTypeId?: string | null;
+    viewType: SavedViewRecord['viewType'];
+    config: SavedViewRecord['config'];
+  }) => {
+    if (!token || !selectedSpaceId) {
+      throw new Error('Выбери пространство перед сохранением представления.');
+    }
+
+    const created = await canvasApi.createSavedView(token, selectedSpaceId, payload);
+    setSavedViews((current) => [created, ...current.filter((view) => view.id !== created.id)]);
+    setActiveSavedViewId(created.id);
+    setTableLensDraft(buildDraftFromSavedView(created, entityTypes));
+    appendLog(`Saved view создан: ${created.name}`);
+
+    return created;
+  };
+
+  const updateSavedView = async (
+    savedViewId: string,
+    payload: {
+      name?: string;
+      description?: string | null;
+      entityTypeId?: string | null;
+      viewType?: SavedViewRecord['viewType'];
+      config?: SavedViewRecord['config'];
+    },
+  ) => {
+    if (!token) {
+      throw new Error('Сначала авторизуйся.');
+    }
+
+    const updated = await canvasApi.updateSavedView(token, savedViewId, payload);
+    setSavedViews((current) =>
+      current.map((savedView) => (savedView.id === savedViewId ? updated : savedView)),
+    );
+    setActiveSavedViewId(updated.id);
+    setTableLensDraft(buildDraftFromSavedView(updated, entityTypes));
+    appendLog(`Saved view обновлён: ${updated.name}`);
+
+    return updated;
+  };
+
+  const deleteSavedView = async (savedViewId: string) => {
+    if (!token) {
+      throw new Error('Сначала авторизуйся.');
+    }
+
+    await canvasApi.deleteSavedView(token, savedViewId);
+    setSavedViews((current) => current.filter((savedView) => savedView.id !== savedViewId));
+    setActiveSavedViewId((current) => (current === savedViewId ? null : current));
+    setTableLensDraft((current) => createDefaultTableDraft(entityTypes, current.viewType));
+    appendLog('Saved view удалён');
+  };
 
   const onNodesChange = (changes: NodeChange[]) => {
     setNodes((current) => applyNodeChanges(changes, current));
@@ -1373,12 +1500,12 @@ export function App() {
     <main className="s3-app">
       <header className="s3-hero">
         <div className="s3-hero__copy">
-          <span className="eyebrow">Ryba S-5 документный слой</span>
-          <h1>Канва, записи и документы в одном рабочем слое</h1>
+          <span className="eyebrow">Ryba S-6 tables + saved views</span>
+          <h1>Канва, таблицы и документы в одном рабочем слое</h1>
           <p>
-            Теперь поверх сущностей и связей появился документный слой. Канва остаётся точкой
-            навигации, панель деталей управляет структурированными данными, а документы связывают
-            это с текстом, упоминаниями и обратными ссылками.
+            Теперь space можно читать не только как граф, но и как рабочую линзу. Сохранённые views
+            собирают фильтры, сортировку и колонки, а канва и документы остаются рядом как соседние
+            режимы работы с теми же сущностями.
           </p>
         </div>
         <div className="s3-hero__stats">
@@ -1391,8 +1518,14 @@ export function App() {
             <strong>{selectedSpace?.slug ?? 'не выбрано'}</strong>
           </div>
           <div>
-            <span>Макет</span>
-            <strong>{layoutDirty ? 'не сохранён' : canvasState?.updatedAt ? 'сохранён' : 'по умолчанию'}</strong>
+            <span>Представление</span>
+            <strong>
+              {activeSavedViewId
+                ? savedViews.find((savedView) => savedView.id === activeSavedViewId)?.name ?? 'saved view'
+                : tableLensDraft.viewType === 'list'
+                  ? 'черновик списка'
+                  : 'черновик таблицы'}
+            </strong>
           </div>
           <div>
             <span>Записи / связи</span>
@@ -1897,6 +2030,47 @@ export function App() {
         </aside>
 
         <section className="canvas-stage">
+          <TableView
+            entities={entities}
+            entityTypes={entityTypes}
+            currentUser={currentUser}
+            draft={tableLensDraft}
+            activeSavedViewId={activeSavedViewId}
+            savedViews={savedViews}
+            loading={canvasLoading}
+            disabled={!token || !selectedSpaceId}
+            busy={!!busyLabel}
+            selectedEntityId={selectedEntityId}
+            onDraftChange={setTableLensDraft}
+            onSelectEntity={selectEntityOnCanvas}
+            onSelectSavedView={selectSavedView}
+            onCreateSavedView={(name) => {
+              void createSavedView({
+                ...serializeStructuredViewDraft(
+                  {
+                    ...tableLensDraft,
+                    name,
+                  },
+                  entityTypes,
+                ),
+              });
+            }}
+            onOverwriteSavedView={(savedViewId) => {
+              void updateSavedView(savedViewId, serializeStructuredViewDraft(tableLensDraft, entityTypes));
+            }}
+            onDeleteSavedView={(savedViewId) => {
+              void deleteSavedView(savedViewId);
+            }}
+            onResetSavedViewDraft={() => {
+              if (activeSavedViewId) {
+                selectSavedView(activeSavedViewId);
+                return;
+              }
+
+              resetTableLensDraft();
+            }}
+          />
+
           <div className="canvas-toolbar">
             <div className="canvas-toolbar__copy">
               <strong>{selectedSpace?.name ?? 'Выбери пространство'}</strong>
@@ -1904,7 +2078,7 @@ export function App() {
                 {canvasLoading
                   ? 'Загрузка канвы...'
                   : selectedSpace
-                    ? 'Перетаскивай карточки, открывай документы двойным кликом и связывай сущности через ссылки внутри текста.'
+                    ? 'Сверху доступна структурированная линза space, снизу остаётся канва для spatial-навигации, раскладки и документных переходов.'
                     : 'Создай пространство или выбери существующее, чтобы открыть канву.'}
               </span>
             </div>

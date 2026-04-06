@@ -9,6 +9,7 @@ import type {
   EntityRecord,
   EntityTypeRecord,
   RelationRecord,
+  SavedViewRecord,
   SpaceRecord,
   UserRecord,
   WorkspaceRecord,
@@ -191,6 +192,72 @@ export const canvasApi = {
 
   getCanvas(token: string, spaceId: string) {
     return request<CanvasStateRecord>(`/spaces/${spaceId}/canvas`, { method: 'GET' }, token);
+  },
+
+  listSavedViews(token: string, spaceId: string) {
+    return request<ListResponse<SavedViewRecord>>(
+      `/spaces/${spaceId}/saved-views`,
+      { method: 'GET' },
+      token,
+    );
+  },
+
+  createSavedView(
+    token: string,
+    spaceId: string,
+    input: {
+      name: string;
+      description?: string | null;
+      entityTypeId?: string | null;
+      viewType: SavedViewRecord['viewType'];
+      config: SavedViewRecord['config'];
+    },
+  ) {
+    return request<SavedViewRecord>(
+      `/spaces/${spaceId}/saved-views`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          name: input.name,
+          description: input.description ?? null,
+          entityTypeId: input.entityTypeId ?? null,
+          viewType: input.viewType,
+          config: input.config,
+        }),
+      },
+      token,
+    );
+  },
+
+  updateSavedView(
+    token: string,
+    savedViewId: string,
+    input: {
+      name?: string;
+      description?: string | null;
+      entityTypeId?: string | null;
+      viewType?: SavedViewRecord['viewType'];
+      config?: SavedViewRecord['config'];
+    },
+  ) {
+    return request<SavedViewRecord>(
+      `/saved-views/${savedViewId}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(input),
+      },
+      token,
+    );
+  },
+
+  deleteSavedView(token: string, savedViewId: string) {
+    return request<{ id: string }>(
+      `/saved-views/${savedViewId}`,
+      {
+        method: 'DELETE',
+      },
+      token,
+    );
   },
 
   listEntityTypes(token: string, workspaceId: string) {

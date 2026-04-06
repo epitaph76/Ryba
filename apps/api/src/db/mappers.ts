@@ -1,4 +1,4 @@
-import { canvasLayoutSchema, documentBlockSchema } from '@ryba/schemas';
+import { canvasLayoutSchema, documentBlockSchema, savedViewConfigSchema } from '@ryba/schemas';
 import type {
   CanvasStateRecord,
   DocumentBacklinkRecord,
@@ -9,6 +9,7 @@ import type {
   EntityTypeRecord,
   JsonObject,
   RelationRecord,
+  SavedViewRecord,
   SpaceRecord,
   UserRecord,
   WorkspaceMemberRecord,
@@ -22,6 +23,7 @@ import type {
   relations,
   documentEntityMentions,
   documents,
+  savedViews,
   spaceCanvasStates,
   spaces,
   users,
@@ -38,6 +40,7 @@ type EntityTypeRow = typeof entityTypes.$inferSelect;
 type EntityTypeFieldRow = typeof entityTypeFields.$inferSelect;
 type RelationRow = typeof relations.$inferSelect;
 type DocumentRow = typeof documents.$inferSelect;
+type SavedViewRow = typeof savedViews.$inferSelect;
 type DocumentEntityMentionRow = typeof documentEntityMentions.$inferSelect;
 type SpaceCanvasStateRow = typeof spaceCanvasStates.$inferSelect;
 
@@ -155,6 +158,21 @@ export const toDocumentRecord = (row: DocumentRow): DocumentRecord => ({
   title: row.title,
   body: documentBlockSchema.array().parse(row.body),
   previewText: row.previewText,
+  createdByUserId: row.createdByUserId,
+  updatedByUserId: row.updatedByUserId,
+  createdAt: row.createdAt,
+  updatedAt: row.updatedAt,
+});
+
+export const toSavedViewRecord = (row: SavedViewRow): SavedViewRecord => ({
+  id: row.id,
+  workspaceId: row.workspaceId,
+  spaceId: row.spaceId,
+  name: row.name,
+  description: row.description,
+  entityTypeId: row.entityTypeId,
+  viewType: row.viewType as SavedViewRecord['viewType'],
+  config: savedViewConfigSchema.parse(row.config),
   createdByUserId: row.createdByUserId,
   updatedByUserId: row.updatedByUserId,
   createdAt: row.createdAt,
