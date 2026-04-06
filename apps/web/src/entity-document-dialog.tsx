@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import type {
   DocumentBacklinkRecord,
   DocumentEntityPreview,
+  DocumentLinkDefinition,
   EntityRecord,
 } from '@ryba/types';
 
@@ -11,7 +12,9 @@ import type { DocumentDraft } from './document-model';
 interface EntityDocumentDialogProps {
   open: boolean;
   entity: EntityRecord | null;
+  currentDocumentId: string | null;
   entities: EntityRecord[];
+  linkDefinitions: DocumentLinkDefinition[];
   draft: DocumentDraft;
   linkedEntities: DocumentEntityPreview[];
   backlinks: DocumentBacklinkRecord[];
@@ -27,7 +30,9 @@ interface EntityDocumentDialogProps {
 export function EntityDocumentDialog({
   open,
   entity,
+  currentDocumentId,
   entities,
+  linkDefinitions,
   draft,
   linkedEntities,
   backlinks,
@@ -69,8 +74,8 @@ export function EntityDocumentDialog({
             <span className="eyebrow">Документ записи</span>
             <h2>{entity.title}</h2>
             <p>
-              Двойной клик по ноде открывает этот полноэкранный редактор. Ссылки на другие записи
-              автоматически превращаются в связи на канве после сохранения.
+              Документ открывается по двойному клику на ноде. Ссылки между документами
+              превращаются в связи на канве после сохранения.
             </p>
           </div>
           <div className="document-dialog__actions">
@@ -80,7 +85,7 @@ export function EntityDocumentDialog({
             <button
               type="button"
               className="button"
-              disabled={busy || saving}
+              disabled={busy || saving || loading}
               onClick={onSave}
             >
               {saving ? 'Сохраняю...' : 'Сохранить документ'}
@@ -90,25 +95,44 @@ export function EntityDocumentDialog({
 
         <div className="document-dialog__content">
           <div className="document-dialog__editor">
-            <DocumentComposer
-              title={draft.title}
-              body={draft.body}
-              entities={entities.filter((item) => item.id !== entity.id)}
-              disabled={busy || saving}
-              onTitleChange={(title) => onDraftChange({ ...draft, title })}
-              onBodyChange={(body) => onDraftChange({ ...draft, body })}
-            />
+            {loading ? (
+              <section className="panel">
+                <p className="panel__hint">Загружаю документ...</p>
+              </section>
+            ) : (
+              <DocumentComposer
+                key={`${entity.id}:${currentDocumentId ?? 'draft'}`}
+                currentDocumentId={currentDocumentId}
+                ownerEntityId={entity.id}
+                title={draft.title}
+                body={draft.body}
+                entities={entities.filter((item) => item.id !== entity.id)}
+                linkDefinitions={linkDefinitions}
+                disabled={busy || saving}
+                onTitleChange={(title) => onDraftChange({ ...draft, title })}
+                onBodyChange={(body) => onDraftChange({ ...draft, body })}
+              />
+            )}
           </div>
 
           <aside className="document-dialog__sidebar">
             <section className="panel">
               <div className="panel__header">
                 <h2>Как ссылаться</h2>
-                <span>1 способ</span>
+                <span>3 способа</span>
               </div>
               <p className="panel__hint">
-                Выбери сущность в выпадающем списке редактора и нажми `Вставить ссылку`.
-                В текст вставится mention, а после сохранения на канве появится связь.
+                1. Старую ссылку на сущность всё ещё можно вставить из списка сверху.
+              </p>
+              <p className="panel__hint">
+                2. В исходном документе задай определение как `link_name**какой то текст**`
+                или `link_name$$какой то текст$$`.
+              </p>
+              <p className="panel__hint">
+                3. В другом документе просто напиши `link_name`. Редактор сам развернёт его
+                в полный токен. Вариант `**...**` всегда подтягивается из исходника как
+                неизменяемая копия, а `$$...$$` можно править, и после сохранения эти правки
+                уйдут обратно в исходный документ.
               </p>
             </section>
 
@@ -121,7 +145,8 @@ export function EntityDocumentDialog({
                 <p className="panel__hint">Загружаю связанные записи...</p>
               ) : linkedEntities.length === 0 ? (
                 <p className="panel__hint">
-                  Пока нет ссылок. Добавь mention в тексте, чтобы граф связей появился сам.
+                  Пока нет ссылок. Добавь ссылку в текст и после сохранения появится связь
+                  между нодами.
                 </p>
               ) : (
                 <div className="document-preview-list">

@@ -2,6 +2,7 @@ export * from './api';
 export * from './auth';
 export * from './canvas';
 export * from './document';
+export * from './document-link';
 export * from './entity';
 export * from './json';
 export * from './relation';

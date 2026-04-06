@@ -259,6 +259,237 @@ describe('S-5 integration', () => {
     expect(loggedIn.user.email).toBe(registerBody.email);
   });
 
+  it('creates graph relations from static document links and keeps copied text immutable', async () => {
+    const token = await bootstrapUserAndGetToken('s5-static-links@ryba.local');
+    const workspace = await createWorkspace(token, 'Static Links', 'static-links');
+    const space = await createSpace(token, workspace.id, 'Knowledge', 'knowledge');
+
+    const sourceEntity = await createEntity(token, space.id, {
+      title: 'Source note',
+      summary: 'Definition holder',
+    });
+    const consumerEntity = await createEntity(token, space.id, {
+      title: 'Consumer note',
+      summary: 'Uses static copy',
+    });
+
+    const sourceDocument = await upsertEntityDocument(token, sourceEntity.id, {
+      title: 'Source note',
+      body: buildEntityDocumentBody(sourceEntity.id, sourceEntity.title, [
+        {
+          id: 'definition-block',
+          kind: 'paragraph',
+          text: 'shared_note**Canonical text**',
+          entityReferences: [],
+        },
+      ]),
+    });
+
+    const consumerDocument = await upsertEntityDocument(token, consumerEntity.id, {
+      title: 'Consumer note',
+      body: buildEntityDocumentBody(consumerEntity.id, consumerEntity.title, [
+        {
+          id: 'usage-block',
+          kind: 'paragraph',
+          text: 'Use shared_note in the brief.',
+          entityReferences: [],
+        },
+      ]),
+    });
+
+    expect(consumerDocument.document.body[1]?.text).toBe('Use shared_note in the brief.');
+    expect(consumerDocument.mentions).toContainEqual(
+      expect.objectContaining({
+        entityId: sourceEntity.id,
+        kind: 'document_link_usage',
+        linkKey: 'shared_note',
+      }),
+    );
+
+    const relationsResponse = await request(app.getHttpServer())
+      .get(`/spaces/${space.id}/relations`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const relationsList = unwrap<{ items: RelationRecord[] }>(relationsResponse.body);
+    listRelationsResponseSchema.parse(relationsList);
+    expect(relationsList.items).toHaveLength(1);
+    expect(relationsList.items).toContainEqual(
+      expect.objectContaining({
+        fromEntityId: sourceEntity.id,
+        toEntityId: consumerEntity.id,
+        relationType: 'document_link',
+      }),
+    );
+
+    const backlinksResponse = await request(app.getHttpServer())
+      .get(`/entities/${sourceEntity.id}/document-backlinks`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const backlinks = unwrap<{ items: DocumentBacklinkRecord[] }>(backlinksResponse.body);
+    listDocumentBacklinksResponseSchema.parse(backlinks);
+    expect(backlinks.items).toContainEqual(
+      expect.objectContaining({
+        sourceEntityId: consumerEntity.id,
+        documentId: consumerDocument.document.id,
+      }),
+    );
+  });
+
+  it('creates usage references and relations when a consumer saves only a bare link key', async () => {
+    const token = await bootstrapUserAndGetToken('s5-bare-links@ryba.local');
+    const workspace = await createWorkspace(token, 'Bare Links', 'bare-links');
+    const space = await createSpace(token, workspace.id, 'Knowledge', 'knowledge');
+
+    const sourceEntity = await createEntity(token, space.id, {
+      title: 'Source bare note',
+      summary: 'Definition holder',
+    });
+    const consumerEntity = await createEntity(token, space.id, {
+      title: 'Consumer bare note',
+      summary: 'Uses bare key',
+    });
+
+    await upsertEntityDocument(token, sourceEntity.id, {
+      title: 'Source bare note',
+      body: buildEntityDocumentBody(sourceEntity.id, sourceEntity.title, [
+        {
+          id: 'definition-block',
+          kind: 'paragraph',
+          text: 'shared_bare**Canonical text**',
+          entityReferences: [
+            {
+              entityId: sourceEntity.id,
+              label: 'shared_bare',
+              anchorId: 'definition-block',
+              kind: 'document_link_definition',
+              linkKey: 'shared_bare',
+              linkText: 'Canonical text',
+              linkMode: 'static',
+              sourceDocumentId: null,
+              sourceBlockId: 'definition-block',
+            },
+          ],
+        },
+      ]),
+    });
+
+    const consumerDocument = await upsertEntityDocument(token, consumerEntity.id, {
+      title: 'Consumer bare note',
+      body: buildEntityDocumentBody(consumerEntity.id, consumerEntity.title, [
+        {
+          id: 'usage-block',
+          kind: 'paragraph',
+          text: 'Use shared_bare in the brief.',
+          entityReferences: [],
+        },
+      ]),
+    });
+
+    expect(consumerDocument.document.body[1]?.text).toBe('Use shared_bare in the brief.');
+    expect(consumerDocument.document.body[1]?.entityReferences).toContainEqual(
+      expect.objectContaining({
+        entityId: sourceEntity.id,
+        kind: 'document_link_usage',
+        linkKey: 'shared_bare',
+        linkMode: 'static',
+        sourceBlockId: 'definition-block',
+      }),
+    );
+
+    const relationsResponse = await request(app.getHttpServer())
+      .get(`/spaces/${space.id}/relations`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const relationsList = unwrap<{ items: RelationRecord[] }>(relationsResponse.body);
+    listRelationsResponseSchema.parse(relationsList);
+    expect(relationsList.items).toHaveLength(1);
+    expect(relationsList.items).toContainEqual(
+      expect.objectContaining({
+        fromEntityId: sourceEntity.id,
+        toEntityId: consumerEntity.id,
+        relationType: 'document_link',
+      }),
+    );
+  });
+
+  it('pushes sync document-link edits back into the source document', async () => {
+    const token = await bootstrapUserAndGetToken('s5-sync-links@ryba.local');
+    const workspace = await createWorkspace(token, 'Sync Links', 'sync-links');
+    const space = await createSpace(token, workspace.id, 'Knowledge', 'knowledge');
+
+    const sourceEntity = await createEntity(token, space.id, {
+      title: 'Live source',
+      summary: 'Sync definition holder',
+    });
+    const consumerEntity = await createEntity(token, space.id, {
+      title: 'Live consumer',
+      summary: 'Edits synced copy',
+    });
+
+    const sourceDocument = await upsertEntityDocument(token, sourceEntity.id, {
+      title: 'Live source',
+      body: buildEntityDocumentBody(sourceEntity.id, sourceEntity.title, [
+        {
+          id: 'sync-definition',
+          kind: 'paragraph',
+          text: 'shared_live$$Original text$$',
+          entityReferences: [],
+        },
+      ]),
+    });
+
+    const consumerDocument = await upsertEntityDocument(token, consumerEntity.id, {
+      title: 'Live consumer',
+      body: buildEntityDocumentBody(consumerEntity.id, consumerEntity.title, [
+        {
+          id: 'sync-usage',
+          kind: 'paragraph',
+          text: 'Reference shared_live$$Edited remotely$$ here.',
+          entityReferences: [],
+        },
+      ]),
+    });
+
+    expect(consumerDocument.mentions).toContainEqual(
+      expect.objectContaining({
+        entityId: sourceEntity.id,
+        kind: 'document_link_usage',
+        linkKey: 'shared_live',
+        linkMode: 'sync',
+      }),
+    );
+
+    const relationsResponse = await request(app.getHttpServer())
+      .get(`/spaces/${space.id}/relations`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const relationsList = unwrap<{ items: RelationRecord[] }>(relationsResponse.body);
+    listRelationsResponseSchema.parse(relationsList);
+    expect(relationsList.items).toContainEqual(
+      expect.objectContaining({
+        fromEntityId: sourceEntity.id,
+        toEntityId: consumerEntity.id,
+        relationType: 'document_link',
+        properties: expect.objectContaining({
+          linkMode: 'sync',
+        }),
+      }),
+    );
+
+    const refreshedSourceResponse = await request(app.getHttpServer())
+      .get(`/entities/${sourceEntity.id}/document`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const refreshedSource = unwrap<DocumentDetailRecord>(refreshedSourceResponse.body);
+    documentDetailRecordSchema.parse(refreshedSource);
+    expect(refreshedSource.document.body[1]?.text).toBe('shared_live$$Edited remotely$$');
+  });
+
   const bootstrapUserAndGetToken = async (email: string): Promise<string> => {
     const response = await request(app.getHttpServer())
       .post('/auth/register')
@@ -358,7 +589,54 @@ describe('S-5 integration', () => {
       ].join(' '),
     );
   };
+
+  const upsertEntityDocument = async (
+    token: string,
+    entityId: string,
+    input: {
+      title: string;
+      body: DocumentBlockInput[];
+    },
+  ): Promise<DocumentDetailRecord> => {
+    const response = await request(app.getHttpServer())
+      .put(`/entities/${entityId}/document`)
+      .set('Authorization', `Bearer ${token}`)
+      .send(input)
+      .expect(200);
+
+    const document = unwrap<DocumentDetailRecord>(response.body);
+    documentDetailRecordSchema.parse(document);
+
+    return document;
+  };
 });
+
+type DocumentBlockInput = {
+  id: string;
+  kind: 'paragraph' | 'heading' | 'list_item' | 'entity_reference';
+  text: string | null;
+  entityReferences: Array<Record<string, unknown>>;
+};
+
+const buildEntityDocumentBody = (
+  entityId: string,
+  entityTitle: string,
+  blocks: DocumentBlockInput[],
+): DocumentBlockInput[] => [
+  {
+    id: 'entity-document-root-block',
+    kind: 'entity_reference',
+    text: null,
+    entityReferences: [
+      {
+        entityId,
+        label: entityTitle,
+        anchorId: 'entity-document-root',
+      },
+    ],
+  },
+  ...blocks,
+];
 
 const unwrap = <TData>(envelope: ApiEnvelope<TData>): TData => {
   if (!envelope.ok) {

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { MouseEvent as ReactMouseEvent } from 'react';
 import {
   Background,
   Controls,
+  Handle,
   MiniMap,
+  Position,
   ReactFlow,
   applyEdgeChanges,
   applyNodeChanges,
@@ -19,6 +20,8 @@ import type {
   CanvasStateRecord,
   DocumentBacklinkRecord,
   DocumentDetailRecord,
+  DocumentLinkDefinition,
+  DocumentRecord,
   EntityRecord,
   EntityTypeFieldRecord,
   EntityTypeRecord,
@@ -29,6 +32,7 @@ import type {
 } from '@ryba/types';
 
 import { canvasApi } from './canvas-api';
+import { buildDocumentLinkDefinitionIndex } from './document-link-runtime';
 import {
   buildCanvasGraph,
   serializeCanvasState,
@@ -66,6 +70,18 @@ const LAST_EMAIL_STORAGE_KEY = 'ryba_last_email';
 function EntityCardNode({ data, selected }: NodeProps<CanvasEntityNodeData>) {
   return (
     <article className={`canvas-node${selected ? ' is-selected' : ''}`}>
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="canvas-node__handle"
+        isConnectable={false}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="canvas-node__handle"
+        isConnectable={false}
+      />
       <div className="canvas-node__header">
         <span className="canvas-node__badge">сущность</span>
         <span className="canvas-node__meta">{data.relationCount} связей</span>
@@ -129,6 +145,10 @@ export function App() {
   const [layoutDirty, setLayoutDirty] = useState(false);
   const [canvasLoading, setCanvasLoading] = useState(false);
   const [canvasError, setCanvasError] = useState<string | null>(null);
+  const [sessionFeedback, setSessionFeedback] = useState<{
+    tone: 'info' | 'success' | 'error';
+    message: string;
+  } | null>(null);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [logLines, setLogLines] = useState<string[]>([]);
   const [entitySaveBusy, setEntitySaveBusy] = useState(false);
@@ -144,6 +164,7 @@ export function App() {
   const [documentEditorDocumentId, setDocumentEditorDocumentId] = useState<string | null>(null);
   const [documentEditorTitle, setDocumentEditorTitle] = useState('');
   const [documentEditorBody, setDocumentEditorBody] = useState<DocumentDetailRecord['document']['body']>([]);
+  const [spaceDocuments, setSpaceDocuments] = useState<DocumentRecord[]>([]);
 
   const [email, setEmail] = useState(() => localStorage.getItem(LAST_EMAIL_STORAGE_KEY) ?? 'demo@ryba.local');
   const [password, setPassword] = useState('Password123');
@@ -162,6 +183,10 @@ export function App() {
     entities.find((entity) => entity.id === documentEditorEntityId) ?? null;
   const selectedEntityType = getEntityTypeById(entityTypes, entityDetailDraft?.entityTypeId);
   const activeSchemaType = getEntityTypeById(entityTypes, activeSchemaTypeId || null);
+  const linkDefinitions = useMemo<DocumentLinkDefinition[]>(
+    () => Array.from(buildDocumentLinkDefinitionIndex(spaceDocuments).values()),
+    [spaceDocuments],
+  );
   const linkedDocumentEntities = useMemo(() => {
     if (!documentEditorEntity) {
       return [];
@@ -189,6 +214,23 @@ export function App() {
     }),
     [documentEditorBody, documentEditorTitle],
   );
+  const persistedDocumentEditorDraft = useMemo(
+    () =>
+      documentEditorEntity
+        ? buildEntityDocumentDraft(documentEditorEntity, documentDetail)
+        : {
+            title: '',
+            body: [],
+          },
+    [documentDetail, documentEditorEntity],
+  );
+  const documentEditorDirty = useMemo(() => {
+    if (!documentEditorEntity) {
+      return false;
+    }
+
+    return JSON.stringify(documentEditorDraft) !== JSON.stringify(persistedDocumentEditorDraft);
+  }, [documentEditorDraft, documentEditorEntity, persistedDocumentEditorDraft]);
 
   const relatedToSelectedEntity = useMemo(() => {
     if (!selectedEntity) {
@@ -223,6 +265,10 @@ export function App() {
     setToken(session.accessToken);
     setCurrentUser(session.user);
     setEmail(session.user.email);
+    setSessionFeedback({
+      tone: 'success',
+      message: `Вход выполнен: ${session.user.email}`,
+    });
     appendLog(`Вход выполнен: ${session.user.email}`);
   };
 
@@ -251,7 +297,12 @@ export function App() {
     setDocumentEditorDocumentId(null);
     setDocumentEditorTitle('');
     setDocumentEditorBody([]);
+    setSpaceDocuments([]);
     setCanvasError(null);
+    setSessionFeedback({
+      tone: 'info',
+      message: 'Сессия очищена. Можно войти снова.',
+    });
     setLayoutDirty(false);
     appendLog('Сессия очищена');
   };
@@ -326,6 +377,12 @@ export function App() {
     }
   };
 
+  const loadDocuments = async (activeToken: string, spaceId: string) => {
+    const response = await canvasApi.listDocuments(activeToken, spaceId);
+    setSpaceDocuments(response.items);
+    return response.items;
+  };
+
   const loadCanvas = async (
     activeToken: string,
     spaceId: string,
@@ -338,6 +395,7 @@ export function App() {
         canvasApi.listEntities(activeToken, spaceId),
         canvasApi.listRelations(activeToken, spaceId),
         canvasApi.getCanvas(activeToken, spaceId),
+        loadDocuments(activeToken, spaceId),
       ]);
 
       applyCanvasSnapshot(
@@ -349,6 +407,114 @@ export function App() {
     } finally {
       setCanvasLoading(false);
     }
+  };
+
+  const createDefaultCanvasNodeLayout = (entityId: string, index: number) => {
+    const columns = 4;
+    const column = index % columns;
+    const row = Math.floor(index / columns);
+
+    return {
+      entityId,
+      position: {
+        x: 96 + column * 280,
+        y: 96 + row * 180,
+      },
+      size: null,
+      zIndex: index + 1,
+      collapsed: false,
+    };
+  };
+
+  const applyCanvasDataPreservingLayout = (
+    nextEntities: EntityRecord[],
+    nextRelations: RelationRecord[],
+    nextDocuments: DocumentRecord[],
+    focusEntityId: string | null,
+  ) => {
+    if (!selectedSpaceId) {
+      return;
+    }
+
+    const liveNodeById = new Map(
+      nodes.map((node, index) => [
+        node.id,
+        {
+          entityId: node.id,
+          position: node.position,
+          size:
+            typeof node.width === 'number' && typeof node.height === 'number'
+              ? { width: node.width, height: node.height }
+              : null,
+          zIndex: node.zIndex ?? index + 1,
+          collapsed: false,
+        },
+      ]),
+    );
+    const persistedNodeById = new Map((canvasState?.nodes ?? []).map((node) => [node.entityId, node]));
+    const liveEdgeById = new Map(edgeLayouts.map((layout) => [layout.relationId, layout]));
+    const persistedEdgeById = new Map(
+      (canvasState?.edges ?? []).map((layout) => [layout.relationId, layout]),
+    );
+
+    const nextCanvas: CanvasStateRecord = {
+      spaceId: selectedSpaceId,
+      nodes: nextEntities.map(
+        (entity, index) =>
+          liveNodeById.get(entity.id) ??
+          persistedNodeById.get(entity.id) ??
+          createDefaultCanvasNodeLayout(entity.id, index),
+      ),
+      edges: nextRelations.map(
+        (relation) =>
+          liveEdgeById.get(relation.id) ??
+          persistedEdgeById.get(relation.id) ?? {
+            relationId: relation.id,
+            fromEntityId: relation.fromEntityId,
+            toEntityId: relation.toEntityId,
+            controlPoints: [],
+          },
+      ),
+      viewport,
+      updatedAt: canvasState?.updatedAt ?? null,
+    };
+
+    const graph = buildCanvasGraph({
+      entities: nextEntities,
+      entityTypes,
+      relations: nextRelations,
+      canvas: nextCanvas,
+      selectedEntityId: focusEntityId,
+    });
+
+    setSpaceDocuments(nextDocuments);
+    setEntities(nextEntities);
+    setRelations(nextRelations);
+    setCanvasState(nextCanvas);
+    setNodes(graph.nodes);
+    setEdges(graph.edges);
+    setEdgeLayouts(nextCanvas.edges);
+    selectEntityOnCanvas(focusEntityId);
+    setCanvasError(null);
+  };
+
+  const refreshCanvasDataPreservingLayout = async (
+    activeToken: string,
+    spaceId: string,
+    focusEntityId: string | null = selectedEntityId,
+  ) => {
+    const [entitiesResponse, relationsResponse, documentsResponse] = await Promise.all([
+      canvasApi.listEntities(activeToken, spaceId),
+      canvasApi.listRelations(activeToken, spaceId),
+      canvasApi.listDocuments(activeToken, spaceId),
+    ]);
+
+    applyCanvasDataPreservingLayout(
+      entitiesResponse.items,
+      relationsResponse.items,
+      documentsResponse.items,
+      focusEntityId,
+    );
   };
 
   const hydrateDocumentEditor = (detail: DocumentDetailRecord | null, entity: EntityRecord) => {
@@ -472,6 +638,13 @@ export function App() {
         setToken(null);
         setCurrentUser(null);
         setCanvasError(null);
+        setSessionFeedback({
+          tone: 'error',
+          message:
+            error instanceof Error
+              ? `Сессия истекла: ${error.message}`
+              : 'Сессия истекла, войди снова.',
+        });
         appendLog(
           error instanceof Error
             ? `Сессия истекла: ${error.message}`
@@ -498,6 +671,7 @@ export function App() {
     if (!token || !selectedSpaceId) {
       setDocumentDetail(null);
       setDocumentEditorDocumentId(null);
+      setSpaceDocuments([]);
       return;
     }
 
@@ -578,6 +752,10 @@ export function App() {
   const authenticateRegister = () =>
     withAction('Регистрация', async () => {
       try {
+        setSessionFeedback({
+          tone: 'info',
+          message: 'Пробую зарегистрировать аккаунт...',
+        });
         const session = await canvasApi.register({
           email,
           password,
@@ -594,6 +772,10 @@ export function App() {
           (error as { details?: { canLogin?: boolean } }).details?.canLogin === true;
 
         if (canLogin || message.startsWith('CONFLICT:')) {
+          setSessionFeedback({
+            tone: 'info',
+            message: 'Аккаунт уже существует. Пробую выполнить вход с этим email.',
+          });
           appendLog('Аккаунт уже существует, пробую выполнить вход.');
           try {
             const session = await canvasApi.login({
@@ -602,6 +784,13 @@ export function App() {
             });
             syncSession(session);
           } catch (loginError) {
+            setSessionFeedback({
+              tone: 'error',
+              message:
+                loginError instanceof Error
+                  ? `Аккаунт уже существует, но войти не удалось: ${loginError.message}`
+                  : 'Аккаунт уже существует, но войти не удалось. Проверь пароль.',
+            });
             throw new Error(
               loginError instanceof Error
                 ? `Аккаунт уже существует. Если это твой email, войди с прежним паролем: ${loginError.message}`
@@ -611,17 +800,46 @@ export function App() {
           return;
         }
 
+        setSessionFeedback({
+          tone: 'error',
+          message:
+            error instanceof Error
+              ? `Не удалось зарегистрироваться: ${error.message}`
+              : 'Не удалось зарегистрироваться.',
+        });
         throw error;
       }
     });
 
   const authenticateLogin = () =>
     withAction('Вход', async () => {
-      const session = await canvasApi.login({
-        email,
-        password,
-      });
-      syncSession(session);
+      try {
+        setSessionFeedback({
+          tone: 'info',
+          message: 'Выполняю вход...',
+        });
+        const session = await canvasApi.login({
+          email,
+          password,
+        });
+        syncSession(session);
+      } catch (error) {
+        const errorCode =
+          typeof error === 'object' && error !== null && 'code' in error
+            ? (error as { code?: unknown }).code
+            : null;
+
+        setSessionFeedback({
+          tone: 'error',
+          message:
+            errorCode === 'UNAUTHORIZED'
+              ? 'Не удалось войти. Проверь email и пароль.'
+              : error instanceof Error
+                ? `Не удалось войти: ${error.message}`
+                : 'Не удалось войти.',
+        });
+        throw error;
+      }
     });
 
   const createWorkspace = () =>
@@ -659,33 +877,6 @@ export function App() {
       await createEntityAtPosition(getCanvasCenterPosition(), 'панели');
     });
 
-  const handleCanvasDoubleClick = (event: ReactMouseEvent<HTMLDivElement>) => {
-    if (!flowInstance || !flowWrapperRef.current || !token || !selectedSpaceId || busyLabel) {
-      return;
-    }
-
-    const target = event.target as HTMLElement | null;
-
-    if (!target?.closest('.react-flow__pane, .react-flow__background')) {
-      return;
-    }
-
-    void withAction('Создание сущности', async () => {
-      const bounds = flowWrapperRef.current?.getBoundingClientRect();
-
-      if (!bounds) {
-        return;
-      }
-
-      const position = flowInstance.project({
-        x: event.clientX - bounds.left,
-        y: event.clientY - bounds.top,
-      });
-
-      await createEntityAtPosition(position, 'канвы');
-    });
-  };
-
   const onNodesChange = (changes: NodeChange[]) => {
     setNodes((current) => applyNodeChanges(changes, current));
     if (changes.length > 0) {
@@ -695,6 +886,36 @@ export function App() {
 
   const onEdgesChange = (changes: EdgeChange[]) => {
     setEdges((current) => applyEdgeChanges(changes, current));
+  };
+
+  const persistOpenDocument = async () => {
+    if (!token || !selectedSpaceId || !documentEditorEntity) {
+      return null;
+    }
+
+    const payload = buildEntityDocumentPayload(documentEditorEntity, {
+      title: documentEditorTitle,
+      body: documentEditorBody,
+    });
+
+    setDocumentSaveBusy(true);
+
+    try {
+      const detail = await canvasApi.upsertEntityDocument(token, documentEditorEntity.id, payload);
+
+      hydrateDocumentEditor(detail, documentEditorEntity);
+      appendLog(`Р”РѕРєСѓРјРµРЅС‚ СЃРѕС…СЂР°РЅС‘РЅ: ${detail.document.title}`);
+      await refreshCanvasDataPreservingLayout(token, selectedSpaceId, documentEditorEntity.id);
+
+      if (selectedEntityId === documentEditorEntity.id) {
+        const backlinks = await canvasApi.listDocumentBacklinks(token, documentEditorEntity.id);
+        setDocumentBacklinks(backlinks.items);
+      }
+
+      return detail;
+    } finally {
+      setDocumentSaveBusy(false);
+    }
   };
 
   const openEntityDocument = (entityId: string) => {
@@ -729,11 +950,17 @@ export function App() {
 
   const saveEntityDocument = () =>
     withAction('Сохранение документа', async () => {
-      if (!token || !selectedSpaceId || !documentEditorEntity) {
+      const activeToken = token;
+      const activeSpaceId = selectedSpaceId;
+      const activeEntity = documentEditorEntity;
+
+      if (!activeToken || !activeSpaceId || !activeEntity) {
         return;
       }
+      await persistOpenDocument();
+      return;
 
-      const payload = buildEntityDocumentPayload(documentEditorEntity, {
+      const payload = buildEntityDocumentPayload(activeEntity!, {
         title: documentEditorTitle,
         body: documentEditorBody,
       });
@@ -741,14 +968,14 @@ export function App() {
       setDocumentSaveBusy(true);
 
       try {
-        const detail = await canvasApi.upsertEntityDocument(token, documentEditorEntity.id, payload);
+        const detail = await canvasApi.upsertEntityDocument(activeToken!, activeEntity!.id, payload);
 
-        hydrateDocumentEditor(detail, documentEditorEntity);
+        hydrateDocumentEditor(detail, activeEntity!);
         appendLog(`Документ сохранён: ${detail.document.title}`);
-        await loadCanvas(token, selectedSpaceId, documentEditorEntity.id);
+        await loadCanvas(activeToken!, activeSpaceId!, activeEntity!.id);
 
-        if (selectedEntityId === documentEditorEntity.id) {
-          const backlinks = await canvasApi.listDocumentBacklinks(token, documentEditorEntity.id);
+        if (selectedEntityId === activeEntity!.id) {
+          const backlinks = await canvasApi.listDocumentBacklinks(activeToken!, activeEntity!.id);
           setDocumentBacklinks(backlinks.items);
         }
       } finally {
@@ -792,6 +1019,93 @@ export function App() {
 
         if (!ownerEntity) {
           throw new Error('Не удалось определить запись, которой принадлежит документ');
+        }
+
+        selectEntityOnCanvas(ownerEntity.id);
+        setDocumentEditorEntityId(ownerEntity.id);
+        hydrateDocumentEditor(detail, ownerEntity);
+      } finally {
+        setDocumentLoading(false);
+      }
+    });
+  };
+
+  const openEntityDocumentWithAutosave = (entityId: string) => {
+    const entity = entities.find((item) => item.id === entityId);
+
+    if (!token || !entity) {
+      return;
+    }
+
+    void withAction('РћС‚РєСЂС‹С‚РёРµ РґРѕРєСѓРјРµРЅС‚Р°', async () => {
+      if (
+        documentEditorEntity &&
+        documentEditorEntity.id !== entityId &&
+        documentEditorDirty &&
+        selectedSpaceId
+      ) {
+        await persistOpenDocument();
+      }
+
+      selectEntityOnCanvas(entityId);
+      setDocumentEditorEntityId(entityId);
+      setDocumentDetail(null);
+      setDocumentEditorDocumentId(null);
+      setDocumentEditorTitle(entity.title);
+      setDocumentEditorBody([]);
+      setDocumentLoading(true);
+
+      try {
+        const detail = await resolveEntityDocument(token, entity);
+        hydrateDocumentEditor(detail, entity);
+      } finally {
+        setDocumentLoading(false);
+      }
+    });
+  };
+
+  const closeEntityDocumentWithAutosave = () => {
+    if (documentEditorDirty && documentEditorEntity && token && selectedSpaceId) {
+      void withAction('Р—Р°РєСЂС‹С‚РёРµ РґРѕРєСѓРјРµРЅС‚Р°', async () => {
+        await persistOpenDocument();
+        closeEntityDocument();
+      });
+      return;
+    }
+
+    closeEntityDocument();
+  };
+
+  const openDocumentFromBacklinkWithAutosave = (documentId: string) => {
+    if (!token) {
+      return;
+    }
+
+    void withAction('РћС‚РєСЂС‹С‚РёРµ СЃРІСЏР·Р°РЅРЅРѕРіРѕ РґРѕРєСѓРјРµРЅС‚Р°', async () => {
+      if (
+        documentEditorEntity &&
+        documentEditorDocumentId !== documentId &&
+        documentEditorDirty &&
+        selectedSpaceId
+      ) {
+        await persistOpenDocument();
+      }
+
+      setDocumentDetail(null);
+      setDocumentEditorDocumentId(null);
+      setDocumentEditorTitle('');
+      setDocumentEditorBody([]);
+      setDocumentLoading(true);
+
+      try {
+        const detail = await canvasApi.getDocument(token, documentId);
+        const ownerEntityId = getEntityDocumentOwnerEntityId(detail);
+        const ownerEntity = ownerEntityId
+          ? entities.find((item) => item.id === ownerEntityId) ?? null
+          : null;
+
+        if (!ownerEntity) {
+          throw new Error('РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ Р·Р°РїРёСЃСЊ, РєРѕС‚РѕСЂРѕР№ РїСЂРёРЅР°РґР»РµР¶РёС‚ РґРѕРєСѓРјРµРЅС‚');
         }
 
         selectEntityOnCanvas(ownerEntity.id);
@@ -1100,14 +1414,24 @@ export function App() {
             </p>
             <label className="field">
               <span>Почта</span>
-              <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
+              <input
+                type="email"
+                value={email}
+                onChange={(event) => {
+                  setSessionFeedback(null);
+                  setEmail(event.target.value);
+                }}
+              />
             </label>
             <label className="field">
               <span>Пароль</span>
               <input
                 type="password"
                 value={password}
-                onChange={(event) => setPassword(event.target.value)}
+                onChange={(event) => {
+                  setSessionFeedback(null);
+                  setPassword(event.target.value);
+                }}
               />
             </label>
             <label className="field">
@@ -1115,7 +1439,10 @@ export function App() {
               <input
                 type="text"
                 value={displayName}
-                onChange={(event) => setDisplayName(event.target.value)}
+                onChange={(event) => {
+                  setSessionFeedback(null);
+                  setDisplayName(event.target.value);
+                }}
               />
             </label>
             <div className="actions">
@@ -1126,6 +1453,11 @@ export function App() {
                 Войти
               </button>
             </div>
+            {sessionFeedback ? (
+              <p className={`panel__notice panel__notice--${sessionFeedback.tone}`} role="status">
+                {sessionFeedback.message}
+              </p>
+            ) : null}
             <button type="button" className="button button--ghost button--full" disabled={!token} onClick={clearSession}>
               Очистить сессию
             </button>
@@ -1448,8 +1780,8 @@ export function App() {
               </button>
             </div>
             <p className="panel__hint">
-              Дважды кликни по пустой области канвы, чтобы создать сущность. Дважды кликни по ноде, чтобы открыть
-              документ на весь экран. Ссылки вставляются через список сущностей и кнопку вставки ссылки в редакторе, а связи появляются после
+              Создавай сущность кнопкой в этой панели. Двойной клик по ноде открывает документ на весь экран.
+              Ссылки вставляются через список сущностей и кнопку вставки ссылки в редакторе, а связи появляются после
               сохранения документа.
             </p>
           </section>
@@ -1534,7 +1866,7 @@ export function App() {
                         key={`${backlink.documentId}-${backlink.anchorId ?? 'root'}`}
                         type="button"
                         className="entity-preview-card"
-                        onClick={() => void openDocumentFromBacklink(backlink.documentId)}
+                        onClick={() => openDocumentFromBacklinkWithAutosave(backlink.documentId)}
                       >
                         <strong>{backlink.documentTitle}</strong>
                         <span>{backlink.previewText}</span>
@@ -1591,7 +1923,7 @@ export function App() {
             </div>
           </div>
 
-          <div className="canvas-shell" ref={flowWrapperRef} onDoubleClick={handleCanvasDoubleClick}>
+          <div className="canvas-shell" ref={flowWrapperRef}>
             {!token ? (
               <div className="canvas-empty">
                 <strong>Сначала авторизуйся</strong>
@@ -1634,7 +1966,7 @@ export function App() {
                   selectEntityOnCanvas(node.id);
                 }}
                 onNodeDoubleClick={(_, node) => {
-                  openEntityDocument(node.id);
+                  openEntityDocumentWithAutosave(node.id);
                 }}
                 onNodeDragStop={() => {
                   setLayoutDirty(true);
@@ -1657,17 +1989,19 @@ export function App() {
       <EntityDocumentDialog
         open={!!documentEditorEntity}
         entity={documentEditorEntity}
+        currentDocumentId={documentEditorDocumentId}
         draft={documentEditorDraft}
         entities={entities}
+        linkDefinitions={linkDefinitions}
         linkedEntities={linkedDocumentEntities}
         backlinks={documentBacklinks}
         loading={documentLoading}
         saving={documentSaveBusy}
         busy={!token || !selectedSpaceId || !!busyLabel}
-        onClose={closeEntityDocument}
+        onClose={closeEntityDocumentWithAutosave}
         onSave={() => void saveEntityDocument()}
         onOpenEntity={(entityId) => {
-          openEntityDocument(entityId);
+          openEntityDocumentWithAutosave(entityId);
         }}
         onDraftChange={(draft) => {
           setDocumentEditorTitle(draft.title);

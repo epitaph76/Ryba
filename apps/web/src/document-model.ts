@@ -1,15 +1,31 @@
 import type {
   DocumentBlock,
   DocumentEntityReference,
+  DocumentLinkDefinition,
   DocumentRecord,
   EntityRecord,
 } from '@ryba/types';
+import {
+  buildDocumentLinkToken,
+  createDocumentLinkDefinitionReference,
+  createDocumentLinkUsageReference,
+  escapeRegExp,
+  extractDocumentLinkTokens,
+  isDocumentLinkDefinitionReference,
+  replaceDocumentLinkTokensForPreview,
+} from './document-link-runtime';
 
 type EditorJsonNode = {
   type?: string;
   text?: string;
   content?: EditorJsonNode[];
 };
+
+interface DocumentSerializationContext {
+  currentDocumentId?: string | null;
+  ownerEntityId?: string | null;
+  linkDefinitions?: DocumentLinkDefinition[] | Map<string, DocumentLinkDefinition>;
+}
 
 const ENTITY_MENTION_PATTERN = /\[\[entity:([^\]|]+)(?:\|([^\]]+))?\]\]/g;
 
@@ -57,9 +73,13 @@ export const extractDocumentMentions = (text: string): DocumentEntityReference[]
     entityId: match[1]?.trim() ?? '',
     label: match[2]?.trim() || null,
     anchorId: null,
+    kind: 'entity_mention' as const,
   })).filter((reference) => reference.entityId.length > 0);
 
-export const serializeEditorDocument = (editorJson: EditorJsonNode | null | undefined): DocumentBlock[] => {
+export const serializeEditorDocument = (
+  editorJson: EditorJsonNode | null | undefined,
+  context: DocumentSerializationContext = {},
+): DocumentBlock[] => {
   if (!editorJson?.content?.length) {
     return [];
   }
@@ -73,41 +93,70 @@ export const serializeEditorDocument = (editorJson: EditorJsonNode | null | unde
 
     if (node.type === 'bulletList' || node.type === 'orderedList') {
       for (const listItem of node.content ?? []) {
-        const text = collectNodeText(listItem).trim();
+        const text = collectNodeText(listItem);
 
-        if (!text) {
+        if (!hasRenderableContent(text)) {
           continue;
         }
 
-        blocks.push({
-          id: `block-${blocks.length + 1}`,
-          kind: 'list_item',
-          text,
-          entityReferences: extractDocumentMentions(text),
-        });
+        const blockId = `block-${blocks.length + 1}`;
+
+        blocks.push(
+          buildNormalizedBlock(
+            {
+              id: blockId,
+              kind: 'list_item',
+              text,
+              entityReferences: [],
+            },
+            context,
+          ),
+        );
       }
 
       continue;
     }
 
-    const text = collectNodeText(node).trim();
+    const text = collectNodeText(node);
 
-    if (!text && node.type !== 'paragraph') {
+    if (!hasRenderableContent(text) && node.type !== 'paragraph') {
       continue;
     }
 
-    blocks.push({
-      id: `block-${blocks.length + 1}`,
-      kind: toBlockKind(node.type),
-      text: text || null,
-      entityReferences: text ? extractDocumentMentions(text) : [],
-    });
+    const blockId = `block-${blocks.length + 1}`;
+
+    blocks.push(
+      buildNormalizedBlock(
+        {
+          id: blockId,
+          kind: toBlockKind(node.type),
+          text: text.length > 0 ? text : null,
+          entityReferences: [],
+        },
+        context,
+      ),
+    );
   }
 
   return blocks;
 };
 
 export const createDocumentBlocksFromEditorJson = serializeEditorDocument;
+
+export const normalizeDocumentBlocks = (
+  blocks: DocumentBlock[],
+  context: DocumentSerializationContext = {},
+) =>
+  blocks.map((block) => {
+    if (
+      block.kind === 'entity_reference' ||
+      block.entityReferences.some(isDocumentLinkDefinitionReference) && block.text === null
+    ) {
+      return block;
+    }
+
+    return buildNormalizedBlock(block, context);
+  });
 
 export const buildEditorHtmlFromBlocks = (blocks: DocumentBlock[]): string => {
   if (blocks.length === 0) {
@@ -137,10 +186,13 @@ export const buildDocumentPreviewText = (blocks: DocumentBlock[]) =>
   blocks
     .map((block) => {
       if (!block.text) {
-        return block.entityReferences.map((reference) => reference.label ?? reference.entityId).join(' ');
+        return block.entityReferences
+          .filter((reference) => reference.kind !== 'document_link_definition')
+          .map((reference) => reference.label ?? reference.linkText ?? reference.entityId)
+          .join(' ');
       }
 
-      return replaceMentionTokens(block.text, block.entityReferences);
+      return replaceDocumentLinksAndMentions(block.text, block.entityReferences);
     })
     .join(' ')
     .replace(/\s+/g, ' ')
@@ -156,7 +208,11 @@ export const buildMentionTargetOptions = (entities: EntityRecord[]) =>
 
 export const findMentionedEntities = (body: DocumentBlock[], entities: EntityRecord[]) => {
   const mentionedEntityIds = new Set(
-    body.flatMap((block) => block.entityReferences.map((reference) => reference.entityId)),
+    body.flatMap((block) =>
+      block.entityReferences
+        .filter((reference) => reference.kind !== 'document_link_definition')
+        .map((reference) => reference.entityId),
+    ),
   );
 
   return entities.filter((entity) => mentionedEntityIds.has(entity.id));
@@ -167,9 +223,257 @@ export const serializeDocumentDraft = (draft: DocumentDraft) => ({
   body: draft.body,
 });
 
+const buildNormalizedBlock = (
+  block: DocumentBlock,
+  context: DocumentSerializationContext,
+): DocumentBlock => {
+  const text = typeof block.text === 'string' ? block.text : '';
+  const definitionMap = toDefinitionMap(context.linkDefinitions);
+  const normalizedText = replaceBareLinkKeys(text, definitionMap, context.currentDocumentId ?? null);
+  const { text: nextText, linkReferences } = resolveDocumentLinks(
+    text,
+    normalizedText,
+    block.id,
+    definitionMap,
+    context,
+  );
+  const entityReferences = [
+    ...extractDocumentMentions(nextText),
+    ...linkReferences,
+  ];
+
+  return {
+    ...block,
+    text: nextText.length > 0 ? nextText : block.kind === 'paragraph' ? null : nextText,
+    entityReferences,
+  };
+};
+
+const resolveDocumentLinks = (
+  originalText: string,
+  text: string,
+  blockId: string,
+  definitionMap: Map<string, DocumentLinkDefinition>,
+  context: DocumentSerializationContext,
+): {
+  text: string;
+  linkReferences: DocumentEntityReference[];
+} => {
+  const tokens = extractDocumentLinkTokens(text);
+  const currentDocumentId = context.currentDocumentId ?? null;
+  const staticBareUsages = findStaticBareUsageDefinitions(
+    originalText,
+    definitionMap,
+    currentDocumentId,
+  );
+
+  if (tokens.length === 0 && staticBareUsages.length === 0) {
+    return {
+      text,
+      linkReferences: [],
+    };
+  }
+
+  let cursor = 0;
+  let nextText = '';
+  const linkReferences: DocumentEntityReference[] = [];
+
+  for (const token of tokens) {
+    nextText += text.slice(cursor, token.start);
+
+    const definition = definitionMap.get(token.key);
+    const isUsage =
+      !!definition &&
+      definition.sourceDocumentId !== currentDocumentId;
+
+    if (isUsage) {
+      const nextMode = definition.mode;
+      const nextTokenText = nextMode === 'static' ? definition.text : token.text;
+
+      nextText +=
+        nextMode === 'static'
+          ? definition.key
+          : buildDocumentLinkToken({
+              key: definition.key,
+              mode: nextMode,
+              text: nextTokenText,
+            });
+      linkReferences.push(
+        createDocumentLinkUsageReference({
+          entityId: definition.sourceEntityId,
+          key: definition.key,
+          mode: nextMode,
+          text: nextTokenText,
+          sourceDocumentId: definition.sourceDocumentId,
+          sourceBlockId: definition.sourceBlockId,
+        }),
+      );
+    } else if (context.ownerEntityId) {
+      nextText += token.raw;
+      linkReferences.push(
+        createDocumentLinkDefinitionReference({
+          entityId: context.ownerEntityId,
+          blockId,
+          key: token.key,
+          mode: token.mode,
+          text: token.text,
+          documentId: currentDocumentId,
+        }),
+      );
+    } else {
+      nextText += token.raw;
+    }
+
+    cursor = token.end;
+  }
+
+  nextText += text.slice(cursor);
+
+  for (const definition of staticBareUsages) {
+    linkReferences.push(
+      createDocumentLinkUsageReference({
+        entityId: definition.sourceEntityId,
+        key: definition.key,
+        mode: 'static',
+        text: definition.text,
+        sourceDocumentId: definition.sourceDocumentId,
+        sourceBlockId: definition.sourceBlockId,
+      }),
+    );
+  }
+
+  return {
+    text: nextText,
+    linkReferences,
+  };
+};
+
+const replaceBareLinkKeys = (
+  text: string,
+  definitionMap: Map<string, DocumentLinkDefinition>,
+  currentDocumentId: string | null,
+) => {
+  let nextText = text;
+  const definitions = Array.from(definitionMap.values())
+    .filter((definition) => definition.sourceDocumentId !== currentDocumentId)
+    .sort((left, right) => right.key.length - left.key.length);
+
+  for (const definition of definitions) {
+    const pattern = new RegExp(
+      `(^|[^A-Za-z0-9_-])(${escapeRegExp(definition.key)})\\b(?!\\*\\*|\\$\\$)`,
+      'g',
+    );
+
+    nextText = nextText.replace(pattern, (_, prefix: string) => {
+      return definition.mode === 'sync'
+        ? `${prefix}${buildDocumentLinkToken({
+            key: definition.key,
+            mode: definition.mode,
+            text: definition.text,
+          })}`
+        : `${prefix}${definition.key}`;
+    });
+  }
+
+  return nextText;
+};
+
+const replaceDocumentLinksAndMentions = (text: string, references: DocumentEntityReference[]) => {
+  let normalized = replaceDocumentLinkTokensForPreview(text);
+
+  for (const reference of references) {
+    if (
+      reference.kind !== 'document_link_usage' ||
+      reference.linkMode !== 'static' ||
+      !reference.linkKey ||
+      typeof reference.linkText !== 'string'
+    ) {
+      continue;
+    }
+
+    const token = new RegExp(
+      `(^|[^A-Za-z0-9_-])(${escapeRegExp(reference.linkKey)})\\b(?!\\*\\*|\\$\\$)`,
+      'g',
+    );
+
+    normalized = normalized.replace(token, (_, prefix: string) => {
+      return `${prefix}${reference.linkText}`;
+    });
+  }
+
+  for (const reference of references) {
+    if (reference.kind === 'document_link_definition' || reference.kind === 'document_link_usage') {
+      continue;
+    }
+
+    const token = new RegExp(
+      String.raw`\[\[entity:${escapeRegExp(reference.entityId)}(?:\|[^\]]+)?\]\]`,
+      'g',
+    );
+
+    normalized = normalized.replace(token, reference.label ?? reference.entityId);
+  }
+
+  return normalized;
+};
+
+const findStaticBareUsageDefinitions = (
+  text: string,
+  definitionMap: Map<string, DocumentLinkDefinition>,
+  currentDocumentId: string | null,
+) => {
+  const definitions = Array.from(definitionMap.values())
+    .filter(
+      (definition) =>
+        definition.mode === 'static' && definition.sourceDocumentId !== currentDocumentId,
+    )
+    .sort((left, right) => right.key.length - left.key.length);
+  const occupiedRanges = extractDocumentLinkTokens(text).map((token) => ({
+    start: token.start,
+    end: token.end,
+  }));
+  const matches: DocumentLinkDefinition[] = [];
+
+  for (const definition of definitions) {
+    const pattern = new RegExp(
+      `(^|[^A-Za-z0-9_-])(${escapeRegExp(definition.key)})\\b(?!\\*\\*|\\$\\$)`,
+      'g',
+    );
+
+    for (const match of text.matchAll(pattern)) {
+      const prefix = match[1] ?? '';
+      const key = match[2];
+      const matchIndex = match.index ?? -1;
+
+      if (!key || matchIndex < 0) {
+        continue;
+      }
+
+      const start = matchIndex + prefix.length;
+      const end = start + key.length;
+      const overlaps = occupiedRanges.some((range) => start < range.end && end > range.start);
+
+      if (overlaps) {
+        continue;
+      }
+
+      occupiedRanges.push({ start, end });
+      matches.push(definition);
+    }
+  }
+
+  return matches;
+};
+
+const hasRenderableContent = (value: string) => value.replace(/\u00a0/g, ' ').trim().length > 0;
+
 const collectNodeText = (node: EditorJsonNode): string => {
   if (typeof node.text === 'string') {
     return node.text;
+  }
+
+  if (node.type === 'hardBreak') {
+    return '\n';
   }
 
   return (node.content ?? []).map(collectNodeText).join('');
@@ -193,19 +497,16 @@ const escapeHtml = (value: string) =>
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;');
 
-const replaceMentionTokens = (text: string, references: DocumentEntityReference[]) => {
-  let normalized = text;
-
-  for (const reference of references) {
-    const token = new RegExp(
-      String.raw`\[\[entity:${escapeRegExp(reference.entityId)}(?:\|[^\]]+)?\]\]`,
-      'g',
-    );
-
-    normalized = normalized.replace(token, reference.label ?? reference.entityId);
+const toDefinitionMap = (
+  definitions?: DocumentLinkDefinition[] | Map<string, DocumentLinkDefinition>,
+) => {
+  if (!definitions) {
+    return new Map<string, DocumentLinkDefinition>();
   }
 
-  return normalized;
-};
+  if (definitions instanceof Map) {
+    return definitions;
+  }
 
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new Map(definitions.map((definition) => [definition.key, definition]));
+};

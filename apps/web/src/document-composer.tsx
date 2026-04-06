@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Placeholder from '@tiptap/extension-placeholder';
 import StarterKit from '@tiptap/starter-kit';
 import { EditorContent, useEditor } from '@tiptap/react';
-import type { DocumentBlock, EntityRecord } from '@ryba/types';
+import type { DocumentBlock, DocumentLinkDefinition, EntityRecord } from '@ryba/types';
 
+import { createDocumentLinkHighlightExtension } from './document-link-highlight-extension';
 import {
   buildEditorHtmlFromBlocks,
   buildEntityMentionToken,
@@ -11,29 +12,69 @@ import {
 } from './document-model';
 
 interface DocumentComposerProps {
+  currentDocumentId: string | null;
+  ownerEntityId: string;
   title: string;
   body: DocumentBlock[];
   entities: EntityRecord[];
+  linkDefinitions: DocumentLinkDefinition[];
   disabled?: boolean;
   onTitleChange: (value: string) => void;
   onBodyChange: (value: DocumentBlock[]) => void;
 }
 
 export function DocumentComposer({
+  currentDocumentId,
+  ownerEntityId,
   title,
   body,
   entities,
+  linkDefinitions,
   disabled = false,
   onTitleChange,
   onBodyChange,
 }: DocumentComposerProps) {
   const [mentionEntityId, setMentionEntityId] = useState('');
+  const latestSerializationContextRef = useRef({
+    currentDocumentId,
+    ownerEntityId,
+    linkDefinitions,
+  });
+  const latestOnBodyChangeRef = useRef(onBodyChange);
+  const linkHighlightExtension = useMemo(
+    () =>
+      createDocumentLinkHighlightExtension({
+        getCurrentDocumentId: () => latestSerializationContextRef.current.currentDocumentId,
+        getDefinitions: () =>
+          new Map(
+            latestSerializationContextRef.current.linkDefinitions.map((definition) => [
+              definition.key,
+              definition,
+            ]),
+          ),
+      }),
+    [],
+  );
+
+  useEffect(() => {
+    latestSerializationContextRef.current = {
+      currentDocumentId,
+      ownerEntityId,
+      linkDefinitions,
+    };
+  }, [currentDocumentId, linkDefinitions, ownerEntityId]);
+
+  useEffect(() => {
+    latestOnBodyChangeRef.current = onBodyChange;
+  }, [onBodyChange]);
+
   const editor = useEditor({
     extensions: [
       StarterKit,
+      linkHighlightExtension,
       Placeholder.configure({
         placeholder:
-          'Собери документ вокруг данных: зафиксируй решение и вставь ссылки на сущности.',
+          'Собери документ вокруг данных: фиксируй текст как обычно, а для ссылок используй link_name, link_name**текст** или link_name$$текст$$.',
       }),
     ],
     content: buildEditorHtmlFromBlocks(body),
@@ -44,7 +85,13 @@ export function DocumentComposer({
     },
     editable: !disabled,
     onUpdate: ({ editor: currentEditor }) => {
-      onBodyChange(createDocumentBlocksFromEditorJson(currentEditor.getJSON()));
+      latestOnBodyChangeRef.current(
+        createDocumentBlocksFromEditorJson(currentEditor.getJSON(), {
+          currentDocumentId: latestSerializationContextRef.current.currentDocumentId,
+          ownerEntityId: latestSerializationContextRef.current.ownerEntityId,
+          linkDefinitions: latestSerializationContextRef.current.linkDefinitions,
+        }),
+      );
     },
   });
 
@@ -61,14 +108,18 @@ export function DocumentComposer({
       return;
     }
 
-    const nextHtml = buildEditorHtmlFromBlocks(body);
+    const currentBlocks = createDocumentBlocksFromEditorJson(editor.getJSON(), {
+      currentDocumentId,
+      ownerEntityId,
+      linkDefinitions,
+    });
 
-    if (editor.getHTML() === nextHtml) {
+    if (JSON.stringify(currentBlocks) === JSON.stringify(body)) {
       return;
     }
 
-    editor.commands.setContent(nextHtml, false);
-  }, [body, editor]);
+    editor.commands.setContent(buildEditorHtmlFromBlocks(body), false);
+  }, [body, currentDocumentId, editor, linkDefinitions, ownerEntityId]);
 
   useEffect(() => {
     setMentionEntityId((current) => current || entities[0]?.id || '');

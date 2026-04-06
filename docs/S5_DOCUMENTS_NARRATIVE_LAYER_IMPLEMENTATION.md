@@ -1,6 +1,6 @@
 # S-5. Documents и Narrative Layer
 
-Дата: `2026-04-01`
+Дата: `2026-04-06`
 
 **Статус:** `done`
 
@@ -125,6 +125,7 @@
 
 - `apps/api/test/s5.integration.test.ts`
 - `apps/web/src/document-model.test.ts`
+- `apps/web/src/canvas-model.test.ts`
 - `apps/web/src/entity-document-model.test.ts`
 
 Для локальной проверки использовались:
@@ -132,13 +133,23 @@
 - `corepack pnpm --dir packages/types build`
 - `corepack pnpm --dir packages/schemas build`
 - `corepack pnpm --filter @ryba/api typecheck`
-- `corepack pnpm --filter @ryba/api test -- --runInBand`
+- `corepack pnpm --filter @ryba/api test -- test/s5.integration.test.ts`
 - `corepack pnpm --filter @ryba/web typecheck`
-- `corepack pnpm --filter @ryba/web test`
+- `corepack pnpm --filter @ryba/web test -- src/document-model.test.ts src/canvas-model.test.ts`
 - `corepack pnpm --filter @ryba/web build`
 - `corepack pnpm typecheck`
 - `corepack pnpm test`
 - `corepack pnpm build`
+
+## Update 2026-04-06
+
+После базового закрытия `S-5` механизм document links был доведён до более строгой `parent -> child` модели.
+
+- `link_name**...**` и `link_name$$...$$` в документе-источнике считаются определением ссылки.
+- В документе-потребителе хранится только ключ `link_name`, а не вторая копия определения.
+- В неактивном состоянии редактор показывает текст родителя как display-представление, но при клике или фокусе ссылка раскрывается обратно в ключ, поэтому редактируется именно ссылка, а не скопированное содержимое.
+- Вариант `**...**` остаётся неизменяемой копией родительского текста, а `$$...$$` по-прежнему поддерживает обратную синхронизацию в исходный документ.
+- На канве `document_link` теперь читается как дуга от документа-родителя к документу-потребителю, чтобы parent/child семантика была очевидна визуально.
 
 ## Результат этапа
 

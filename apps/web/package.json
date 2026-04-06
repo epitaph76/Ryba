@@ -11,6 +11,8 @@
     "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
+    "@tiptap/core": "^2.11.5",
+    "@tiptap/pm": "^2.11.5",
     "@ryba/types": "workspace:*",
     "@tanstack/react-table": "^8.20.5",
     "@tanstack/react-virtual": "^3.10.9",

@@ -1,3 +1,4 @@
+import { MarkerType } from 'reactflow';
 import { describe, expect, it } from 'vitest';
 
 import { buildCanvasGraph, serializeCanvasState } from './canvas-model';
@@ -103,6 +104,184 @@ describe('canvas-model', () => {
     expect(graph.nodes[0]?.data.entityTypeName).toBe('Company');
     expect(graph.nodes[1]?.selected).toBe(true);
     expect(graph.edges[0]?.data?.relationType).toBe('depends_on');
+    expect(graph.edges[0]?.type).toBe('smoothstep');
+  });
+
+  it('renders document-link relations as bezier arcs without text labels', () => {
+    const graph = buildCanvasGraph({
+      entities: [
+        {
+          id: 'entity-a',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          entityTypeId: null,
+          title: 'Alpha',
+          summary: 'First',
+          properties: {},
+          createdByUserId: 'user-1',
+          updatedByUserId: 'user-1',
+          createdAt: '2026-04-01T00:00:00.000Z',
+          updatedAt: '2026-04-01T00:00:00.000Z',
+        },
+        {
+          id: 'entity-b',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          entityTypeId: null,
+          title: 'Beta',
+          summary: null,
+          properties: {},
+          createdByUserId: 'user-1',
+          updatedByUserId: 'user-1',
+          createdAt: '2026-04-01T00:00:00.000Z',
+          updatedAt: '2026-04-01T00:00:00.000Z',
+        },
+      ],
+      entityTypes: [],
+      relations: [
+        {
+          id: 'relation-doc',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          fromEntityId: 'entity-a',
+          toEntityId: 'entity-b',
+          relationType: 'document_link',
+          properties: {},
+          createdByUserId: 'user-1',
+          updatedByUserId: 'user-1',
+          createdAt: '2026-04-01T00:00:00.000Z',
+          updatedAt: '2026-04-01T00:00:00.000Z',
+        },
+      ],
+      canvas: {
+        spaceId: 'space-1',
+        nodes: [
+          {
+            entityId: 'entity-a',
+            position: { x: 80, y: 100 },
+            size: null,
+            zIndex: 1,
+            collapsed: false,
+          },
+          {
+            entityId: 'entity-b',
+            position: { x: 360, y: 220 },
+            size: null,
+            zIndex: 2,
+            collapsed: false,
+          },
+        ],
+        edges: [
+          {
+            relationId: 'relation-doc',
+            fromEntityId: 'entity-a',
+            toEntityId: 'entity-b',
+            controlPoints: [],
+          },
+        ],
+        viewport: {
+          zoom: 1,
+          offset: { x: 0, y: 0 },
+        },
+        updatedAt: null,
+      },
+      selectedEntityId: null,
+    });
+
+    expect(graph.edges[0]?.type).toBe('bezier');
+    expect(graph.edges[0]?.label).toBeUndefined();
+    expect(graph.edges[0]?.markerStart).toBeUndefined();
+    expect(graph.edges[0]?.markerEnd).toEqual({ type: MarkerType.ArrowClosed });
+    expect(graph.nodes[0]?.sourcePosition).toBe('right');
+    expect(graph.nodes[1]?.targetPosition).toBe('left');
+  });
+
+  it('renders sync document links with arrows on both ends', () => {
+    const graph = buildCanvasGraph({
+      entities: [
+        {
+          id: 'entity-a',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          entityTypeId: null,
+          title: 'Alpha',
+          summary: 'First',
+          properties: {},
+          createdByUserId: 'user-1',
+          updatedByUserId: 'user-1',
+          createdAt: '2026-04-01T00:00:00.000Z',
+          updatedAt: '2026-04-01T00:00:00.000Z',
+        },
+        {
+          id: 'entity-b',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          entityTypeId: null,
+          title: 'Beta',
+          summary: null,
+          properties: {},
+          createdByUserId: 'user-1',
+          updatedByUserId: 'user-1',
+          createdAt: '2026-04-01T00:00:00.000Z',
+          updatedAt: '2026-04-01T00:00:00.000Z',
+        },
+      ],
+      entityTypes: [],
+      relations: [
+        {
+          id: 'relation-doc-sync',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          fromEntityId: 'entity-a',
+          toEntityId: 'entity-b',
+          relationType: 'document_link',
+          properties: {
+            linkMode: 'sync',
+          },
+          createdByUserId: 'user-1',
+          updatedByUserId: 'user-1',
+          createdAt: '2026-04-01T00:00:00.000Z',
+          updatedAt: '2026-04-01T00:00:00.000Z',
+        },
+      ],
+      canvas: {
+        spaceId: 'space-1',
+        nodes: [
+          {
+            entityId: 'entity-a',
+            position: { x: 80, y: 100 },
+            size: null,
+            zIndex: 1,
+            collapsed: false,
+          },
+          {
+            entityId: 'entity-b',
+            position: { x: 360, y: 220 },
+            size: null,
+            zIndex: 2,
+            collapsed: false,
+          },
+        ],
+        edges: [
+          {
+            relationId: 'relation-doc-sync',
+            fromEntityId: 'entity-a',
+            toEntityId: 'entity-b',
+            controlPoints: [],
+          },
+        ],
+        viewport: {
+          zoom: 1,
+          offset: { x: 0, y: 0 },
+        },
+        updatedAt: null,
+      },
+      selectedEntityId: null,
+    });
+
+    expect(graph.edges[0]?.type).toBe('bezier');
+    expect(graph.edges[0]?.markerStart).toEqual({ type: MarkerType.ArrowClosed });
+    expect(graph.edges[0]?.markerEnd).toEqual({ type: MarkerType.ArrowClosed });
   });
 
   it('serializes current graph nodes back into canvas payload', () => {

@@ -1,8 +1,9 @@
-import { MarkerType, type Edge, type Node } from 'reactflow';
+import { MarkerType, Position, type Edge, type Node } from 'reactflow';
 import type {
   CanvasEdgeLayout,
   CanvasStateInput,
   CanvasStateRecord,
+  DocumentLinkMode,
   EntityRecord,
   EntityTypeRecord,
   RelationRecord,
@@ -18,6 +19,16 @@ export type CanvasEntityNodeData = {
 
 export type CanvasEntityNode = Node<CanvasEntityNodeData>;
 export type CanvasRelationEdge = Edge<{ relationId: string; relationType: string }>;
+
+const getRelationLinkMode = (relation: RelationRecord): DocumentLinkMode | null => {
+  const linkMode = relation.properties.linkMode;
+
+  if (linkMode === 'static' || linkMode === 'sync') {
+    return linkMode;
+  }
+
+  return null;
+};
 
 export function buildCanvasGraph(input: {
   entities: EntityRecord[];
@@ -57,6 +68,8 @@ export function buildCanvasGraph(input: {
       id: entity.id,
       type: 'entityCard',
       position: layout.position,
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
       selected: input.selectedEntityId === entity.id,
       data: {
         entityId: entity.id,
@@ -81,9 +94,15 @@ export function buildCanvasGraph(input: {
       id: relation.id,
       source: relation.fromEntityId,
       target: relation.toEntityId,
-      type: 'smoothstep',
+      type: relation.relationType === 'document_link' ? 'bezier' : 'smoothstep',
       animated: false,
-      label: relation.relationType,
+      label: relation.relationType === 'document_link' ? undefined : relation.relationType,
+      markerStart:
+        relation.relationType === 'document_link' && getRelationLinkMode(relation) === 'sync'
+          ? {
+              type: MarkerType.ArrowClosed,
+            }
+          : undefined,
       markerEnd: {
         type: MarkerType.ArrowClosed,
       },

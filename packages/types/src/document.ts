@@ -1,6 +1,7 @@
 import type { EntityId, EntityTypeId } from './entity';
 import type { SpaceId, WorkspaceId } from './workspace';
 import type { UserId } from './user';
+import type { DocumentLinkMode } from './document-link';
 
 export type DocumentId = string;
 
@@ -8,6 +9,12 @@ export interface DocumentEntityReference {
   entityId: EntityId;
   label: string | null;
   anchorId: string | null;
+  kind?: 'entity_mention' | 'document_link_definition' | 'document_link_usage';
+  linkKey?: string | null;
+  linkText?: string | null;
+  linkMode?: DocumentLinkMode | null;
+  sourceDocumentId?: DocumentId | null;
+  sourceBlockId?: string | null;
 }
 
 export interface DocumentBlock {

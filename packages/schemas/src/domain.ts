@@ -376,6 +376,14 @@ export const documentEntityReferenceSchema = z.object({
   entityId: idSchema,
   label: z.string().nullable(),
   anchorId: z.string().nullable(),
+  kind: z
+    .enum(['entity_mention', 'document_link_definition', 'document_link_usage'])
+    .optional(),
+  linkKey: z.string().trim().min(1).max(64).nullable().optional(),
+  linkText: z.string().nullable().optional(),
+  linkMode: z.enum(['static', 'sync']).nullable().optional(),
+  sourceDocumentId: idSchema.nullable().optional(),
+  sourceBlockId: z.string().trim().min(1).max(128).nullable().optional(),
 });
 
 export const documentBlockSchema = z.object({
