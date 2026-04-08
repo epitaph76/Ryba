@@ -58,7 +58,8 @@ export const userRecordSchema = z.object({
   updatedAt: z.string().min(1),
 });
 
-export const workspaceRoleSchema = z.enum(['owner', 'member']);
+export const workspaceRoleSchema = z.enum(['owner', 'editor', 'viewer']);
+export const workspaceAssignableRoleSchema = z.enum(['editor', 'viewer']);
 
 export const workspaceRecordSchema = z.object({
   id: idSchema,
@@ -76,6 +77,14 @@ export const workspaceMemberRecordSchema = z.object({
   role: workspaceRoleSchema,
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
+});
+
+export const workspaceMemberDetailRecordSchema = workspaceMemberRecordSchema.extend({
+  user: userRecordSchema.pick({
+    id: true,
+    email: true,
+    displayName: true,
+  }),
 });
 
 export const spaceRecordSchema = z.object({
@@ -258,6 +267,10 @@ export const workspaceIdParamsSchema = z.object({
   workspaceId: idSchema,
 });
 
+export const workspaceMemberIdParamsSchema = z.object({
+  membershipId: idSchema,
+});
+
 export const spaceIdParamsSchema = z.object({
   spaceId: idSchema,
 });
@@ -280,6 +293,10 @@ export const entityTypeIdParamsSchema = z.object({
 
 export const listWorkspacesResponseSchema = z.object({
   items: z.array(workspaceRecordSchema),
+});
+
+export const listWorkspaceMembersResponseSchema = z.object({
+  items: z.array(workspaceMemberDetailRecordSchema),
 });
 
 export const listSpacesResponseSchema = z.object({
@@ -405,6 +422,40 @@ export const savedViewIdParamsSchema = z.object({
 
 export const listSavedViewsResponseSchema = z.object({
   items: z.array(savedViewRecordSchema),
+});
+
+export const inviteWorkspaceMemberRequestSchema = z.object({
+  email: z.string().email(),
+  role: workspaceAssignableRoleSchema,
+});
+
+export const updateWorkspaceMemberRoleRequestSchema = z.object({
+  role: workspaceAssignableRoleSchema,
+});
+
+export const activityActorRecordSchema = userRecordSchema.pick({
+  id: true,
+  email: true,
+  displayName: true,
+});
+
+export const activityEventRecordSchema = z.object({
+  id: idSchema,
+  workspaceId: idSchema,
+  spaceId: idSchema.nullable(),
+  groupId: idSchema.nullable(),
+  actorUserId: idSchema,
+  eventType: z.string().trim().min(1).max(120),
+  targetType: z.string().trim().min(1).max(120),
+  targetId: idSchema,
+  summary: z.string().trim().min(1).max(4000),
+  metadata: jsonObjectSchema.default({}),
+  createdAt: z.string().min(1),
+  actor: activityActorRecordSchema,
+});
+
+export const listActivityEventsResponseSchema = z.object({
+  items: z.array(activityEventRecordSchema),
 });
 
 export const entityTypeFieldInputSchema = z.object({

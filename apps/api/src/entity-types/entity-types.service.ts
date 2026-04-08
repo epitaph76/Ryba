@@ -20,6 +20,7 @@ import {
   normalizeEntityProperties,
   normalizeFieldConfig,
 } from './entity-value';
+import { WorkspaceActivityService } from '../workspaces/workspace-activity.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 
 type WorkspaceIdParams = z.infer<typeof workspaceIdParamsSchema>;
@@ -32,6 +33,8 @@ export class EntityTypesService {
   constructor(
     @Inject(DatabaseService)
     private readonly databaseService: DatabaseService,
+    @Inject(WorkspaceActivityService)
+    private readonly workspaceActivityService: WorkspaceActivityService,
     @Inject(WorkspacesService)
     private readonly workspacesService: WorkspacesService,
   ) {}
@@ -40,7 +43,7 @@ export class EntityTypesService {
     userId: string,
     params: WorkspaceIdParams,
   ): Promise<EntityTypeRecord[]> {
-    await this.workspacesService.requireMembership(userId, params.workspaceId);
+    await this.workspacesService.requirePermission(userId, params.workspaceId, 'read');
     return this.loadWorkspaceEntityTypes(params.workspaceId);
   }
 
@@ -50,7 +53,7 @@ export class EntityTypesService {
     payload: CreateEntityTypeRequest,
   ): Promise<EntityTypeRecord> {
     const db = this.getDb();
-    await this.workspacesService.requireMembership(userId, params.workspaceId);
+    await this.workspacesService.requirePermission(userId, params.workspaceId, 'manage');
     const slug = payload.slug.trim().toLowerCase();
 
     await this.ensureUniqueSlug(params.workspaceId, slug);
@@ -75,7 +78,21 @@ export class EntityTypesService {
       }
     });
 
-    return this.requireEntityTypeWithFields(entityTypeId);
+    const entityType = await this.requireEntityTypeWithFields(entityTypeId);
+
+    await this.workspaceActivityService.recordEvent({
+      workspaceId: entityType.workspaceId,
+      actorUserId: userId,
+      eventType: 'entity_type.created',
+      targetType: 'entity_type',
+      targetId: entityType.id,
+      summary: `Entity type created: ${entityType.name}`,
+      metadata: {
+        slug: entityType.slug,
+      },
+    });
+
+    return entityType;
   }
 
   async updateEntityType(
@@ -115,7 +132,21 @@ export class EntityTypesService {
       }
     });
 
-    return this.requireEntityTypeWithFields(current.id);
+    const entityType = await this.requireEntityTypeWithFields(current.id);
+
+    await this.workspaceActivityService.recordEvent({
+      workspaceId: entityType.workspaceId,
+      actorUserId: userId,
+      eventType: 'entity_type.updated',
+      targetType: 'entity_type',
+      targetId: entityType.id,
+      summary: `Entity type updated: ${entityType.name}`,
+      metadata: {
+        slug: entityType.slug,
+      },
+    });
+
+    return entityType;
   }
 
   async resolveEntityTypeForWorkspace(
@@ -263,7 +294,7 @@ export class EntityTypesService {
       throw new ApiException(HttpStatus.NOT_FOUND, 'NOT_FOUND', 'Entity type not found');
     }
 
-    await this.workspacesService.requireMembership(userId, row.workspaceId);
+    await this.workspacesService.requirePermission(userId, row.workspaceId, 'manage');
 
     return row;
   }

@@ -15,6 +15,7 @@ import {
   type Viewport,
 } from 'reactflow';
 import type {
+  ActivityEventRecord,
   AuthSession,
   CanvasEdgeLayout,
   CanvasStateRecord,
@@ -30,7 +31,9 @@ import type {
   SavedViewRecord,
   SpaceRecord,
   UserRecord,
+  WorkspaceMemberDetailRecord,
   WorkspaceRecord,
+  WorkspaceRole,
 } from '@ryba/types';
 
 import { canvasApi } from './canvas-api';
@@ -73,6 +76,7 @@ import {
 } from './entity-document-model';
 import { getFieldOptions, type FieldEditorValue } from './field-renderers';
 import { isRecordInSubspaceContext, resolveActiveSubspace } from './subspace-model';
+import { getWorkspaceCapabilities } from './workspace-permissions';
 import { TableView } from './components/TableView';
 import {
   buildDraftFromSavedView,
@@ -85,7 +89,6 @@ import {
 const TOKEN_STORAGE_KEY = 'ryba_s3_access_token';
 const LAST_EMAIL_STORAGE_KEY = 'ryba_last_email';
 const ENTITY_DELETE_UNDO_WINDOW_MS = 8000;
-
 function EntityCardNode({ data, selected }: NodeProps<CanvasEntityNodeData>) {
   return (
     <article className={`canvas-node${selected ? ' is-selected' : ''}`}>
@@ -122,6 +125,11 @@ const defaultViewport = {
   offset: { x: 0, y: 0 },
 };
 
+const activityDateFormatter = new Intl.DateTimeFormat('ru-RU', {
+  dateStyle: 'short',
+  timeStyle: 'short',
+});
+
 const toCommaSeparated = (value: FieldEditorValue) => {
   if (Array.isArray(value)) {
     return value.join(', ');
@@ -140,6 +148,16 @@ const fromCommaSeparated = (value: string) =>
     .map((item) => item.trim())
     .filter(Boolean);
 
+const formatActivityTimestamp = (value: string) => {
+  const timestamp = new Date(value);
+
+  if (Number.isNaN(timestamp.getTime())) {
+    return value;
+  }
+
+  return activityDateFormatter.format(timestamp);
+};
+
 export function App() {
   const flowWrapperRef = useRef<HTMLDivElement | null>(null);
   const pendingEntityDeletionTimerRef = useRef<number | null>(null);
@@ -150,6 +168,8 @@ export function App() {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_STORAGE_KEY));
   const [currentUser, setCurrentUser] = useState<UserRecord | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
+  const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMemberDetailRecord[]>([]);
+  const [activityItems, setActivityItems] = useState<ActivityEventRecord[]>([]);
   const [spaces, setSpaces] = useState<SpaceRecord[]>([]);
   const [groups, setGroups] = useState<GroupRecord[]>([]);
   const [entities, setEntities] = useState<EntityRecord[]>([]);
@@ -201,6 +221,8 @@ export function App() {
   const [displayName, setDisplayName] = useState('Демо Ryba');
   const [workspaceName, setWorkspaceName] = useState('Рабочее пространство канвы');
   const [workspaceSlug, setWorkspaceSlug] = useState('canvas-workspace');
+  const [inviteMemberEmail, setInviteMemberEmail] = useState('');
+  const [inviteMemberRole, setInviteMemberRole] = useState<'editor' | 'viewer'>('editor');
   const [spaceName, setSpaceName] = useState('Общее');
   const [spaceSlug, setSpaceSlug] = useState('general');
   const [groupName, setGroupName] = useState('Enterprise Clients');
@@ -228,6 +250,24 @@ export function App() {
   });
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null;
+  const memberByUserId = useMemo(
+    () => new Map(workspaceMembers.map((member) => [member.userId, member])),
+    [workspaceMembers],
+  );
+  const currentWorkspaceMember =
+    currentUser ? workspaceMembers.find((member) => member.userId === currentUser.id) ?? null : null;
+  const currentWorkspaceRole = currentWorkspaceMember?.role ?? null;
+  const workspaceCapabilities = getWorkspaceCapabilities(currentWorkspaceRole);
+  const canReadSelectedWorkspace = workspaceCapabilities.canRead;
+  const canEditSelectedWorkspace = workspaceCapabilities.canEdit;
+  const canManageSelectedWorkspace = workspaceCapabilities.canManage;
+  const workspaceAccessSummary = canManageSelectedWorkspace
+    ? 'Owner управляет участниками, структурой workspace и всем контентом.'
+    : canEditSelectedWorkspace
+      ? 'Editor может менять контент, документы, канву и saved views, но не управляет составом команды.'
+      : canReadSelectedWorkspace
+        ? 'Viewer работает только в режиме чтения и не меняет контент или структуру.'
+        : 'Доступ к workspace ещё не определён.';
   const selectedSpace = spaces.find((space) => space.id === selectedSpaceId) ?? null;
   const activeSubspace = resolveActiveSubspace({
     spaceId: selectedSpaceId,
@@ -248,6 +288,10 @@ export function App() {
     entities.find((entity) => entity.id === documentEditorEntityId) ?? null;
   const selectedEntityType = getEntityTypeById(entityTypes, entityDetailDraft?.entityTypeId);
   const activeSchemaType = getEntityTypeById(entityTypes, activeSchemaTypeId || null);
+  const selectedEntityCreatedBy =
+    selectedEntity ? memberByUserId.get(selectedEntity.createdByUserId)?.user ?? null : null;
+  const selectedEntityUpdatedBy =
+    selectedEntity ? memberByUserId.get(selectedEntity.updatedByUserId)?.user ?? null : null;
   const linkDefinitions = useMemo<DocumentLinkDefinition[]>(
     () => Array.from(buildDocumentLinkDefinitionIndex(spaceDocuments).values()),
     [spaceDocuments],
@@ -366,6 +410,8 @@ export function App() {
     setToken(null);
     setCurrentUser(null);
     setWorkspaces([]);
+    setWorkspaceMembers([]);
+    setActivityItems([]);
     setSpaces([]);
     setGroups([]);
     setEntities([]);
@@ -471,6 +517,34 @@ export function App() {
     if (!response.items.some((space) => space.id === selectedSpaceId)) {
       setSelectedSpaceId(response.items[0]?.id ?? '');
     }
+  };
+
+  const loadWorkspaceMembers = async (activeToken: string, workspaceId: string) => {
+    const response = await canvasApi.listWorkspaceMembers(activeToken, workspaceId);
+    setWorkspaceMembers(response.items);
+    return response.items;
+  };
+
+  const loadWorkspaceActivity = async (activeToken: string, workspaceId: string) => {
+    const response = await canvasApi.listWorkspaceActivity(activeToken, workspaceId);
+    setActivityItems(response.items);
+    return response.items;
+  };
+
+  const refreshWorkspaceMembers = async () => {
+    if (!token || !selectedWorkspaceId) {
+      return;
+    }
+
+    await loadWorkspaceMembers(token, selectedWorkspaceId);
+  };
+
+  const refreshWorkspaceActivity = async () => {
+    if (!token || !selectedWorkspaceId) {
+      return;
+    }
+
+    await loadWorkspaceActivity(token, selectedWorkspaceId);
   };
 
   const loadGroups = async (activeToken: string, spaceId: string) => {
@@ -685,7 +759,7 @@ export function App() {
   };
 
   const persistLayout = async (reason: string) => {
-    if (!token || !selectedSpaceId) {
+    if (!token || !selectedSpaceId || !canEditSelectedWorkspace) {
       return;
     }
 
@@ -703,6 +777,7 @@ export function App() {
     setEdgeLayouts(saved.edges);
     setViewport(saved.viewport);
     setLayoutDirty(false);
+    await refreshWorkspaceActivity();
     appendLog(`Макет сохранён: ${reason}`);
   };
 
@@ -723,7 +798,7 @@ export function App() {
   };
 
   const createEntityAtPosition = async (position: { x: number; y: number }, origin: string) => {
-    if (!token || !selectedSpaceId) {
+    if (!token || !selectedSpaceId || !canEditSelectedWorkspace) {
       return;
     }
 
@@ -769,6 +844,7 @@ export function App() {
       await canvasApi.saveCanvas(token, selectedSpaceId, nextPayload);
     }
 
+    await refreshWorkspaceActivity();
     appendLog(`Сущность создана из ${origin}: ${created.title}`);
     await loadCanvas(token, selectedSpaceId, created.id, activeSubspace.groupId);
   };
@@ -796,6 +872,7 @@ export function App() {
 
     try {
       await canvasApi.deleteEntity(activeToken, snapshot.entity.id);
+      await refreshWorkspaceActivity();
       appendLog(`Запись удалена: ${snapshot.entity.id}`);
     } catch (error) {
       if (isActiveSpace) {
@@ -857,6 +934,11 @@ export function App() {
 
   useEffect(() => {
     if (!token || !selectedWorkspaceId) {
+      setWorkspaceMembers([]);
+      setActivityItems([]);
+      setSpaces([]);
+      setGroups([]);
+      setSelectedSpaceId('');
       return;
     }
 
@@ -864,6 +946,8 @@ export function App() {
       await Promise.all([
         loadSpaces(token, selectedWorkspaceId),
         loadEntityTypes(token, selectedWorkspaceId),
+        loadWorkspaceMembers(token, selectedWorkspaceId),
+        loadWorkspaceActivity(token, selectedWorkspaceId),
       ]);
     });
   }, [selectedWorkspaceId, token]);
@@ -1091,9 +1175,44 @@ export function App() {
       setSelectedWorkspaceId(workspace.id);
     });
 
+  const inviteWorkspaceMember = () =>
+    withAction('Добавление участника', async () => {
+      if (!token || !selectedWorkspaceId || !canManageSelectedWorkspace) {
+        return;
+      }
+
+      const member = await canvasApi.inviteWorkspaceMember(token, selectedWorkspaceId, {
+        email: inviteMemberEmail.trim(),
+        role: inviteMemberRole,
+      });
+      setInviteMemberEmail('');
+      setWorkspaceMembers((current) => [
+        member,
+        ...current.filter((item) => item.id !== member.id),
+      ]);
+      await refreshWorkspaceActivity();
+      appendLog(`Участник добавлен: ${member.user.email}`);
+    });
+
+  const changeWorkspaceMemberRole = (membershipId: string, role: 'editor' | 'viewer') =>
+    withAction('Обновление роли участника', async () => {
+      if (!token || !canManageSelectedWorkspace) {
+        return;
+      }
+
+      const member = await canvasApi.updateWorkspaceMemberRole(token, membershipId, {
+        role,
+      });
+      setWorkspaceMembers((current) =>
+        current.map((item) => (item.id === member.id ? member : item)),
+      );
+      await refreshWorkspaceActivity();
+      appendLog(`Роль обновлена: ${member.user.email}`);
+    });
+
   const createSpace = () =>
     withAction('Создание пространства', async () => {
-      if (!token || !selectedWorkspaceId) {
+      if (!token || !selectedWorkspaceId || !canManageSelectedWorkspace) {
         return;
       }
 
@@ -1103,12 +1222,13 @@ export function App() {
       });
       appendLog(`Пространство создано: ${space.slug}`);
       await loadSpaces(token, selectedWorkspaceId);
+      await refreshWorkspaceActivity();
       setSelectedSpaceId(space.id);
     });
 
   const createGroup = () =>
     withAction('Создание subspace-группы', async () => {
-      if (!token || !selectedSpaceId) {
+      if (!token || !selectedSpaceId || !canManageSelectedWorkspace) {
         return;
       }
 
@@ -1119,6 +1239,7 @@ export function App() {
       });
       setGroups((current) => [group, ...current.filter((item) => item.id !== group.id)]);
       setSelectedGroupId(group.id);
+      await refreshWorkspaceActivity();
       appendLog(`Группа создана: ${group.slug}`);
     });
 
@@ -1156,7 +1277,7 @@ export function App() {
     viewType: SavedViewRecord['viewType'];
     config: SavedViewRecord['config'];
   }) => {
-    if (!token || !selectedSpaceId) {
+    if (!token || !selectedSpaceId || !canEditSelectedWorkspace) {
       throw new Error('Выбери пространство перед сохранением представления.');
     }
 
@@ -1166,6 +1287,7 @@ export function App() {
     setSavedViews((current) => [created, ...current.filter((view) => view.id !== created.id)]);
     setActiveSavedViewId(created.id);
     setTableLensDraft(buildDraftFromSavedView(created, entityTypes));
+    await refreshWorkspaceActivity();
     appendLog(`Saved view создан: ${created.name}`);
 
     return created;
@@ -1181,7 +1303,7 @@ export function App() {
       config?: SavedViewRecord['config'];
     },
   ) => {
-    if (!token) {
+    if (!token || !canEditSelectedWorkspace) {
       throw new Error('Сначала авторизуйся.');
     }
 
@@ -1191,13 +1313,14 @@ export function App() {
     );
     setActiveSavedViewId(updated.id);
     setTableLensDraft(buildDraftFromSavedView(updated, entityTypes));
+    await refreshWorkspaceActivity();
     appendLog(`Saved view обновлён: ${updated.name}`);
 
     return updated;
   };
 
   const deleteSavedView = async (savedViewId: string) => {
-    if (!token) {
+    if (!token || !canEditSelectedWorkspace) {
       throw new Error('Сначала авторизуйся.');
     }
 
@@ -1205,6 +1328,7 @@ export function App() {
     setSavedViews((current) => current.filter((savedView) => savedView.id !== savedViewId));
     setActiveSavedViewId((current) => (current === savedViewId ? null : current));
     setTableLensDraft((current) => createDefaultTableDraft(entityTypes, current.viewType));
+    await refreshWorkspaceActivity();
     appendLog('Saved view удалён');
   };
 
@@ -1220,7 +1344,7 @@ export function App() {
   };
 
   const persistOpenDocument = async () => {
-    if (!token || !selectedSpaceId || !documentEditorEntity) {
+    if (!token || !selectedSpaceId || !documentEditorEntity || !canEditSelectedWorkspace) {
       return null;
     }
 
@@ -1235,6 +1359,7 @@ export function App() {
       const detail = await canvasApi.upsertEntityDocument(token, documentEditorEntity.id, payload);
 
       hydrateDocumentEditor(detail, documentEditorEntity);
+      await refreshWorkspaceActivity();
       appendLog(`Р”РѕРєСѓРјРµРЅС‚ СЃРѕС…СЂР°РЅС‘РЅ: ${detail.document.title}`);
       await refreshCanvasDataPreservingLayout(token, selectedSpaceId, documentEditorEntity.id);
 
@@ -1285,7 +1410,7 @@ export function App() {
       const activeSpaceId = selectedSpaceId;
       const activeEntity = documentEditorEntity;
 
-      if (!activeToken || !activeSpaceId || !activeEntity) {
+      if (!activeToken || !activeSpaceId || !activeEntity || !canEditSelectedWorkspace) {
         return;
       }
       await persistOpenDocument();
@@ -1315,7 +1440,7 @@ export function App() {
     });
 
   const deleteSelectedEntity = () => {
-    if (!token || !selectedSpaceId || !selectedEntityId || pendingEntityDeletion) {
+    if (!token || !selectedSpaceId || !selectedEntityId || pendingEntityDeletion || !canEditSelectedWorkspace) {
       return;
     }
 
@@ -1593,7 +1718,7 @@ export function App() {
 
   const saveEntityDetail = () =>
     withAction('Сохранение записи', async () => {
-      if (!token || !selectedSpaceId || !selectedEntity || !entityDetailDraft) {
+      if (!token || !selectedSpaceId || !selectedEntity || !entityDetailDraft || !canEditSelectedWorkspace) {
         return;
       }
 
@@ -1602,6 +1727,7 @@ export function App() {
       try {
         const payload = buildEntityUpdatePayload(entityDetailDraft, entityTypes);
         const updated = await canvasApi.updateEntity(token, selectedEntity.id, payload);
+        await refreshWorkspaceActivity();
         appendLog(`Запись обновлена: ${updated.title}`);
         await loadCanvas(token, selectedSpaceId, updated.id);
       } finally {
@@ -1654,7 +1780,7 @@ export function App() {
 
   const saveSchemaLayer = () =>
     withAction('Сохранение схемы', async () => {
-      if (!token || !selectedWorkspaceId) {
+      if (!token || !selectedWorkspaceId || !canManageSelectedWorkspace) {
         return;
       }
 
@@ -1682,6 +1808,7 @@ export function App() {
         const nextTypes = await canvasApi.listEntityTypes(token, selectedWorkspaceId);
         setEntityTypes(nextTypes.items);
         setActiveSchemaTypeId(persistedTypeId);
+        await refreshWorkspaceActivity();
       } finally {
         setSchemaSaveBusy(false);
       }
@@ -1779,12 +1906,12 @@ export function App() {
     <main className="s3-app">
       <header className="s3-hero">
         <div className="s3-hero__copy">
-          <span className="eyebrow">Ryba S-6 tables + saved views</span>
-          <h1>Канва, таблицы и документы в одном рабочем слое</h1>
+          <span className="eyebrow">Ryba S-8 permissions + activity</span>
+          <h1>Workspace для команды с базовыми ролями и видимой историей действий</h1>
           <p>
-            Теперь space можно читать не только как граф, но и как рабочую линзу. Сохранённые views
-            собирают фильтры, сортировку и колонки, а канва и документы остаются рядом как соседние
-            режимы работы с теми же сущностями.
+            На этом этапе workspace становится пригодным для маленькой команды: owner управляет
+            участниками и структурой, editor меняет контент, viewer остаётся в read-only, а ключевые
+            действия складываются в общую activity ленту.
           </p>
         </div>
         <div className="s3-hero__stats">
@@ -1793,18 +1920,12 @@ export function App() {
             <strong>{selectedWorkspace?.slug ?? 'не выбрано'}</strong>
           </div>
           <div>
-            <span>Пространство</span>
-            <strong>{selectedSpace?.slug ?? 'не выбрано'}</strong>
+            <span>Текущая роль</span>
+            <strong>{workspaceCapabilities.roleLabel}</strong>
           </div>
           <div>
-            <span>Представление</span>
-            <strong>
-              {activeSavedViewId
-                ? savedViews.find((savedView) => savedView.id === activeSavedViewId)?.name ?? 'saved view'
-                : tableLensDraft.viewType === 'list'
-                  ? 'черновик списка'
-                  : 'черновик таблицы'}
-            </strong>
+            <span>Пространство</span>
+            <strong>{selectedSpace?.slug ?? 'не выбрано'}</strong>
           </div>
           <div>
             <span>Записи / связи</span>
@@ -1877,9 +1998,120 @@ export function App() {
 
           <section className="panel">
             <div className="panel__header">
+              <h2>Доступ workspace</h2>
+              <span>{selectedWorkspace ? workspaceCapabilities.roleLabel : 'не выбрано'}</span>
+            </div>
+            {!selectedWorkspaceId ? (
+              <p className="panel__hint">
+                Выбери workspace, чтобы увидеть текущую роль, участников команды и общую activity ленту.
+              </p>
+            ) : (
+              <>
+                <p className="panel__notice panel__notice--info">
+                  Текущая роль: <strong>{workspaceCapabilities.roleLabel}</strong>. {workspaceAccessSummary}
+                </p>
+
+                <div className="workspace-member-list">
+                  {workspaceMembers.map((member) => {
+                    const memberRoleLabel = getWorkspaceCapabilities(member.role).roleLabel;
+                    const memberName = member.user.displayName?.trim() || member.user.email;
+                    const isOwnerMember = member.role === 'owner';
+
+                    return (
+                      <article key={member.id} className="workspace-member-card">
+                        <div className="workspace-member-card__identity">
+                          <strong>{memberName}</strong>
+                          <span>{member.user.email}</span>
+                        </div>
+                        <div className="workspace-member-card__actions">
+                          <span className="status-pill">{memberRoleLabel}</span>
+                          {canManageSelectedWorkspace && !isOwnerMember ? (
+                            <select
+                              value={member.role}
+                              disabled={!!busyLabel}
+                              onChange={(event) =>
+                                void changeWorkspaceMemberRole(
+                                  member.id,
+                                  event.target.value as 'editor' | 'viewer',
+                                )
+                              }
+                            >
+                              <option value="editor">Editor</option>
+                              <option value="viewer">Viewer</option>
+                            </select>
+                          ) : null}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+
+                <button
+                  type="button"
+                  className="button button--ghost button--full"
+                  disabled={!!busyLabel}
+                  onClick={() =>
+                    void withAction('Обновление доступа workspace', async () => {
+                      await Promise.all([refreshWorkspaceMembers(), refreshWorkspaceActivity()]);
+                    })
+                  }
+                >
+                  Обновить участников и activity
+                </button>
+
+                {canManageSelectedWorkspace ? (
+                  <>
+                    <label className="field">
+                      <span>Email участника</span>
+                      <input
+                        type="email"
+                        value={inviteMemberEmail}
+                        disabled={!!busyLabel}
+                        onChange={(event) => setInviteMemberEmail(event.target.value)}
+                        placeholder="member@ryba.local"
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Роль</span>
+                      <select
+                        value={inviteMemberRole}
+                        disabled={!!busyLabel}
+                        onChange={(event) =>
+                          setInviteMemberRole(event.target.value as 'editor' | 'viewer')
+                        }
+                      >
+                        <option value="editor">Editor</option>
+                        <option value="viewer">Viewer</option>
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      className="button button--full"
+                      disabled={!!busyLabel || inviteMemberEmail.trim().length === 0}
+                      onClick={inviteWorkspaceMember}
+                    >
+                      Добавить участника
+                    </button>
+                  </>
+                ) : (
+                  <p className="panel__hint">
+                    Состав команды меняет только owner. Editor и viewer видят состав и ленту событий.
+                  </p>
+                )}
+              </>
+            )}
+          </section>
+
+          <section className="panel">
+            <div className="panel__header">
               <h2>Слой схемы</h2>
               <span>{activeSchemaType ? activeSchemaType.slug : 'новый тип'}</span>
             </div>
+            <p className="panel__hint">
+              {canManageSelectedWorkspace
+                ? 'Типы сущностей и поля меняет только owner, потому что это часть структуры workspace.'
+                : 'Схема доступна для просмотра, но менять типы и поля в S-8 может только owner.'}
+            </p>
             <label className="field">
               <span>Активный тип</span>
               <select
@@ -1900,7 +2132,13 @@ export function App() {
                 type="button"
                 className="button button--ghost"
                 onClick={startNewEntityType}
-                disabled={!token || !selectedWorkspaceId || !!busyLabel || schemaSaveBusy}
+                disabled={
+                  !token ||
+                  !selectedWorkspaceId ||
+                  !!busyLabel ||
+                  schemaSaveBusy ||
+                  !canManageSelectedWorkspace
+                }
               >
                 Новый тип
               </button>
@@ -1908,163 +2146,179 @@ export function App() {
                 type="button"
                 className="button"
                 onClick={saveSchemaLayer}
-                disabled={!token || !selectedWorkspaceId || !!busyLabel || schemaSaveBusy}
+                disabled={
+                  !token ||
+                  !selectedWorkspaceId ||
+                  !!busyLabel ||
+                  schemaSaveBusy ||
+                  !canManageSelectedWorkspace
+                }
               >
                 {schemaSaveBusy ? 'Сохраняю...' : 'Сохранить тип'}
               </button>
             </div>
-            <label className="field">
-              <span>Название типа</span>
-              <input
-                type="text"
-                value={entityTypeDraft.name}
-                onChange={(event) => updateEntityTypeDraft({ name: event.target.value })}
-              />
-            </label>
-            <label className="field">
-              <span>Slug</span>
-              <input
-                type="text"
-                value={entityTypeDraft.slug}
-                onChange={(event) => updateEntityTypeDraft({ slug: event.target.value })}
-              />
-            </label>
-            <label className="field">
-              <span>Описание</span>
-              <textarea
-                rows={2}
-                value={entityTypeDraft.description}
-                onChange={(event) => updateEntityTypeDraft({ description: event.target.value })}
-              />
-            </label>
-            <label className="field">
-              <span>Цветовой токен</span>
-              <input
-                type="text"
-                value={entityTypeDraft.color}
-                onChange={(event) => updateEntityTypeDraft({ color: event.target.value })}
-              />
-            </label>
-            <label className="field">
-              <span>Иконка</span>
-              <input
-                type="text"
-                value={entityTypeDraft.icon}
-                onChange={(event) => updateEntityTypeDraft({ icon: event.target.value })}
-              />
-            </label>
-            <div className="schema-fields">
-              {entityTypeDraft.fields.map((field, index) => (
-                <div className="schema-field-row" key={`${field.key}-${index}`}>
-                  <label className="field">
-                    <span>Подпись</span>
-                    <input
-                      type="text"
-                      value={field.label}
-                      onChange={(event) => updateSchemaField(index, { label: event.target.value })}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Ключ</span>
-                    <input
-                      type="text"
-                      value={field.key}
-                      onChange={(event) => updateSchemaField(index, { key: event.target.value })}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Тип поля</span>
-                    <select
-                      value={field.fieldType}
-                      onChange={(event) =>
-                        updateSchemaField(index, {
-                          fieldType: event.target.value as EntityTypeFieldRecord['fieldType'],
-                        })
-                      }
-                    >
-                      <option value="text">text</option>
-                      <option value="rich_text">rich_text</option>
-                      <option value="number">number</option>
-                      <option value="boolean">boolean</option>
-                      <option value="date">date</option>
-                      <option value="select">select</option>
-                      <option value="multi_select">multi_select</option>
-                      <option value="relation">relation</option>
-                      <option value="user">user</option>
-                      <option value="url">url</option>
-                      <option value="status">status</option>
-                    </select>
-                  </label>
-                  <label className="field">
-                    <span>Варианты (через запятую)</span>
-                    <input
-                      type="text"
-                      value={field.optionsText}
-                      onChange={(event) =>
-                        updateSchemaField(index, { optionsText: event.target.value })
-                      }
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Описание</span>
-                    <input
-                      type="text"
-                      value={field.description}
-                      onChange={(event) =>
-                        updateSchemaField(index, { description: event.target.value })
-                      }
-                    />
-                  </label>
-                  <label className="field">
-                    <span>ID типа связи</span>
-                    <input
-                      type="text"
-                      value={field.relationEntityTypeId}
-                      onChange={(event) =>
-                        updateSchemaField(index, {
-                          relationEntityTypeId: event.target.value,
-                        })
-                      }
-                    />
-                  </label>
-                  <label className="checkbox-field">
-                    <input
-                      type="checkbox"
-                      checked={field.required}
-                      onChange={(event) =>
-                        updateSchemaField(index, { required: event.target.checked })
-                      }
-                    />
-                    <span>Обязательное</span>
-                  </label>
-                  <label className="checkbox-field">
-                    <input
-                      type="checkbox"
-                      checked={field.allowMultiple}
-                      onChange={(event) =>
-                        updateSchemaField(index, { allowMultiple: event.target.checked })
-                      }
-                    />
-                    <span>Разрешить несколько значений</span>
-                  </label>
-                  <button
-                    type="button"
-                    className="button button--ghost"
-                    onClick={() => removeSchemaField(index)}
-                  >
-                    Удалить поле
-                  </button>
-                </div>
-              ))}
-            </div>
-            <button
-              type="button"
-              className="button button--ghost button--full"
-              onClick={addSchemaField}
-              disabled={!token || !selectedWorkspaceId || !!busyLabel || schemaSaveBusy}
+            <fieldset
+              className="panel__fieldset"
+              disabled={
+                !token ||
+                !selectedWorkspaceId ||
+                !!busyLabel ||
+                schemaSaveBusy ||
+                !canManageSelectedWorkspace
+              }
             >
-              Добавить поле
-            </button>
+              <label className="field">
+                <span>Название типа</span>
+                <input
+                  type="text"
+                  value={entityTypeDraft.name}
+                  onChange={(event) => updateEntityTypeDraft({ name: event.target.value })}
+                />
+              </label>
+              <label className="field">
+                <span>Slug</span>
+                <input
+                  type="text"
+                  value={entityTypeDraft.slug}
+                  onChange={(event) => updateEntityTypeDraft({ slug: event.target.value })}
+                />
+              </label>
+              <label className="field">
+                <span>Описание</span>
+                <textarea
+                  rows={2}
+                  value={entityTypeDraft.description}
+                  onChange={(event) => updateEntityTypeDraft({ description: event.target.value })}
+                />
+              </label>
+              <label className="field">
+                <span>Цветовой токен</span>
+                <input
+                  type="text"
+                  value={entityTypeDraft.color}
+                  onChange={(event) => updateEntityTypeDraft({ color: event.target.value })}
+                />
+              </label>
+              <label className="field">
+                <span>Иконка</span>
+                <input
+                  type="text"
+                  value={entityTypeDraft.icon}
+                  onChange={(event) => updateEntityTypeDraft({ icon: event.target.value })}
+                />
+              </label>
+              <div className="schema-fields">
+                {entityTypeDraft.fields.map((field, index) => (
+                  <div className="schema-field-row" key={`${field.key}-${index}`}>
+                    <label className="field">
+                      <span>Подпись</span>
+                      <input
+                        type="text"
+                        value={field.label}
+                        onChange={(event) => updateSchemaField(index, { label: event.target.value })}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Ключ</span>
+                      <input
+                        type="text"
+                        value={field.key}
+                        onChange={(event) => updateSchemaField(index, { key: event.target.value })}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Тип поля</span>
+                      <select
+                        value={field.fieldType}
+                        onChange={(event) =>
+                          updateSchemaField(index, {
+                            fieldType: event.target.value as EntityTypeFieldRecord['fieldType'],
+                          })
+                        }
+                      >
+                        <option value="text">text</option>
+                        <option value="rich_text">rich_text</option>
+                        <option value="number">number</option>
+                        <option value="boolean">boolean</option>
+                        <option value="date">date</option>
+                        <option value="select">select</option>
+                        <option value="multi_select">multi_select</option>
+                        <option value="relation">relation</option>
+                        <option value="user">user</option>
+                        <option value="url">url</option>
+                        <option value="status">status</option>
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Варианты (через запятую)</span>
+                      <input
+                        type="text"
+                        value={field.optionsText}
+                        onChange={(event) =>
+                          updateSchemaField(index, { optionsText: event.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Описание</span>
+                      <input
+                        type="text"
+                        value={field.description}
+                        onChange={(event) =>
+                          updateSchemaField(index, { description: event.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span>ID типа связи</span>
+                      <input
+                        type="text"
+                        value={field.relationEntityTypeId}
+                        onChange={(event) =>
+                          updateSchemaField(index, {
+                            relationEntityTypeId: event.target.value,
+                          })
+                        }
+                      />
+                    </label>
+                    <label className="checkbox-field">
+                      <input
+                        type="checkbox"
+                        checked={field.required}
+                        onChange={(event) =>
+                          updateSchemaField(index, { required: event.target.checked })
+                        }
+                      />
+                      <span>Обязательное</span>
+                    </label>
+                    <label className="checkbox-field">
+                      <input
+                        type="checkbox"
+                        checked={field.allowMultiple}
+                        onChange={(event) =>
+                          updateSchemaField(index, { allowMultiple: event.target.checked })
+                        }
+                      />
+                      <span>Разрешить несколько значений</span>
+                    </label>
+                    <button
+                      type="button"
+                      className="button button--ghost"
+                      onClick={() => removeSchemaField(index)}
+                    >
+                      Удалить поле
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="button button--ghost button--full"
+                onClick={addSchemaField}
+              >
+                Добавить поле
+              </button>
+            </fieldset>
           </section>
 
           <section className="panel">
@@ -2115,6 +2369,11 @@ export function App() {
                 ))}
               </select>
             </label>
+            {selectedWorkspaceId ? (
+              <p className="panel__hint">
+                Роль в текущем workspace: {workspaceCapabilities.roleLabel}. {workspaceAccessSummary}
+              </p>
+            ) : null}
             <label className="field">
               <span>Название пространства</span>
               <input type="text" value={spaceName} onChange={(event) => setSpaceName(event.target.value)} />
@@ -2128,7 +2387,17 @@ export function App() {
               />
             </label>
             <div className="actions">
-              <button type="button" className="button" disabled={!token || !selectedWorkspaceId || !!busyLabel} onClick={createSpace}>
+              <button
+                type="button"
+                className="button"
+                disabled={
+                  !token ||
+                  !selectedWorkspaceId ||
+                  !!busyLabel ||
+                  !canManageSelectedWorkspace
+                }
+                onClick={createSpace}
+              >
                 Создать пространство
               </button>
               <button
@@ -2205,7 +2474,7 @@ export function App() {
                   <button
                     type="button"
                     className="button"
-                    disabled={!token || !selectedSpaceId || !!busyLabel}
+                    disabled={!token || !selectedSpaceId || !!busyLabel || !canManageSelectedWorkspace}
                     onClick={createGroup}
                   >
                     Создать group
@@ -2251,18 +2520,35 @@ export function App() {
               />
             </label>
             <div className="actions">
-              <button type="button" className="button" disabled={!token || !selectedSpaceId || !!busyLabel} onClick={quickCreateCenteredEntity}>
+              <button
+                type="button"
+                className="button"
+                disabled={!token || !selectedSpaceId || !!busyLabel || !canEditSelectedWorkspace}
+                onClick={quickCreateCenteredEntity}
+              >
                 Добавить в центр
               </button>
               <button
                 type="button"
                 className="button button--ghost"
-                disabled={!token || !selectedSpaceId || !!busyLabel || !layoutDirty || !!activePendingDeletion}
+                disabled={
+                  !token ||
+                  !selectedSpaceId ||
+                  !!busyLabel ||
+                  !layoutDirty ||
+                  !!activePendingDeletion ||
+                  !canEditSelectedWorkspace
+                }
                 onClick={() => void withAction('Сохранение макета', () => persistLayout('ручное сохранение'))}
               >
                 Сохранить макет
               </button>
             </div>
+            {!canEditSelectedWorkspace && selectedWorkspaceId ? (
+              <p className="panel__hint">
+                Текущая роль открывает канву в read-only: можно смотреть контекст, но нельзя менять layout и создавать записи.
+              </p>
+            ) : null}
             {activePendingDeletion ? (
               <>
                 <p className="panel__hint">
@@ -2297,60 +2583,70 @@ export function App() {
                   <strong>{selectedEntity.id}</strong>
                   <span>{relatedToSelectedEntity.length} связей</span>
                 </div>
-                <label className="field">
-                  <span>Тип сущности</span>
-                  <select
-                    value={entityDetailDraft.entityTypeId ?? ''}
-                    onChange={(event) => handleDetailEntityTypeChange(event.target.value)}
-                  >
-                    <option value="">Без типа</option>
-                    {entityTypes.map((entityType) => (
-                      <option key={entityType.id} value={entityType.id}>
-                        {entityType.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="field">
-                  <span>Заголовок</span>
-                  <input
-                    type="text"
-                    value={entityDetailDraft.title}
-                    onChange={(event) => updateDetailDraft({ title: event.target.value })}
-                  />
-                </label>
-                <label className="field">
-                  <span>Краткое описание</span>
-                  <textarea
-                    rows={3}
-                    value={entityDetailDraft.summary}
-                    onChange={(event) => updateDetailDraft({ summary: event.target.value })}
-                  />
-                </label>
-                <div className="detail-fields">
-                  {selectedEntityType?.fields.length ? (
-                    selectedEntityType.fields
-                      .slice()
-                      .sort((left, right) => left.order - right.order)
-                      .map((field) => (
-                        <div className="detail-field-row" key={field.id}>
-                          {renderFieldEditor(field)}
-                        </div>
-                      ))
-                  ) : (
-                    <p className="panel__hint">
-                      У этой записи пока нет типизированных полей. Выбери тип или добавь их в слое схемы.
-                    </p>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  className="button button--full"
-                  onClick={saveEntityDetail}
-                  disabled={!token || !selectedSpaceId || !!busyLabel || entitySaveBusy}
+                {!canEditSelectedWorkspace ? (
+                  <p className="panel__hint">
+                    Запись открыта в режиме чтения. Owner и editor могут менять поля, viewer только читает.
+                  </p>
+                ) : null}
+                <fieldset
+                  className="panel__fieldset"
+                  disabled={!token || !selectedSpaceId || !!busyLabel || entitySaveBusy || !canEditSelectedWorkspace}
                 >
-                  {entitySaveBusy ? 'Сохраняю...' : 'Сохранить запись'}
-                </button>
+                  <label className="field">
+                    <span>Тип сущности</span>
+                    <select
+                      value={entityDetailDraft.entityTypeId ?? ''}
+                      onChange={(event) => handleDetailEntityTypeChange(event.target.value)}
+                    >
+                      <option value="">Без типа</option>
+                      {entityTypes.map((entityType) => (
+                        <option key={entityType.id} value={entityType.id}>
+                          {entityType.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Заголовок</span>
+                    <input
+                      type="text"
+                      value={entityDetailDraft.title}
+                      onChange={(event) => updateDetailDraft({ title: event.target.value })}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Краткое описание</span>
+                    <textarea
+                      rows={3}
+                      value={entityDetailDraft.summary}
+                      onChange={(event) => updateDetailDraft({ summary: event.target.value })}
+                    />
+                  </label>
+                  <div className="detail-fields">
+                    {selectedEntityType?.fields.length ? (
+                      selectedEntityType.fields
+                        .slice()
+                        .sort((left, right) => left.order - right.order)
+                        .map((field) => (
+                          <div className="detail-field-row" key={field.id}>
+                            {renderFieldEditor(field)}
+                          </div>
+                        ))
+                    ) : (
+                      <p className="panel__hint">
+                        У этой записи пока нет типизированных полей. Выбери тип или добавь их в слое схемы.
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="button button--full"
+                    onClick={saveEntityDetail}
+                    disabled={!token || !selectedSpaceId || !!busyLabel || entitySaveBusy || !canEditSelectedWorkspace}
+                  >
+                    {entitySaveBusy ? 'Сохраняю...' : 'Сохранить запись'}
+                  </button>
+                </fieldset>
                 <div className="document-preview-list">
                   <div className="panel__header">
                     <h2>Обратные ссылки</h2>
@@ -2384,15 +2680,35 @@ export function App() {
 
           <section className="panel">
             <div className="panel__header">
-              <h2>Активность</h2>
-              <span>{logLines.length}</span>
+              <h2>Лента workspace</h2>
+              <span>{activityItems.length}</span>
             </div>
             <ul className="compact-list">
-              {logLines.length === 0 ? <li>Действий пока не было.</li> : null}
-              {logLines.map((line) => (
-                <li key={line}>{line}</li>
-              ))}
+              {!selectedWorkspaceId ? <li>Выбери workspace, чтобы увидеть server-side activity.</li> : null}
+              {selectedWorkspaceId && activityItems.length === 0 ? <li>Событий workspace пока не было.</li> : null}
+              {activityItems.map((item) => {
+                const actorName = item.actor.displayName?.trim() || item.actor.email;
+
+                return (
+                  <li key={item.id}>
+                    <strong>{item.summary}</strong>
+                    <span>
+                      {actorName} · {item.eventType} · {formatActivityTimestamp(item.createdAt)}
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
+            {logLines.length > 0 ? (
+              <>
+                <p className="panel__hint">Локальная сессия</p>
+                <ul className="compact-list">
+                  {logLines.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
           </section>
         </aside>
 
@@ -2406,6 +2722,7 @@ export function App() {
             savedViews={savedViews}
             loading={canvasLoading}
             disabled={!token || !selectedSpaceId}
+            persistDisabled={!canEditSelectedWorkspace}
             busy={!!busyLabel}
             selectedEntityId={selectedEntityId}
             onDraftChange={setTableLensDraft}
@@ -2490,6 +2807,7 @@ export function App() {
                 nodes={nodes}
                 edges={edges}
                 nodeTypes={nodeTypes}
+                nodesDraggable={canEditSelectedWorkspace}
                 onInit={setFlowInstance}
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
@@ -2538,7 +2856,7 @@ export function App() {
         backlinks={documentBacklinks}
         loading={documentLoading}
         saving={documentSaveBusy}
-        busy={!token || !selectedSpaceId || !!busyLabel}
+        busy={!token || !selectedSpaceId || !!busyLabel || !canEditSelectedWorkspace}
         onClose={closeEntityDocumentWithAutosave}
         onSave={() => void saveEntityDocument()}
         onOpenEntity={(entityId) => {

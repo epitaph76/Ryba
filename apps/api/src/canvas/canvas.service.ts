@@ -19,6 +19,7 @@ import {
   spaces,
 } from '../db/schema';
 import { GroupsService } from '../groups/groups.service';
+import { WorkspaceActivityService } from '../workspaces/workspace-activity.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 
 type SpaceIdParams = z.infer<typeof spaceIdParamsSchema>;
@@ -34,6 +35,8 @@ export class CanvasService {
     private readonly databaseService: DatabaseService,
     @Inject(GroupsService)
     private readonly groupsService: GroupsService,
+    @Inject(WorkspaceActivityService)
+    private readonly workspaceActivityService: WorkspaceActivityService,
     @Inject(WorkspacesService)
     private readonly workspacesService: WorkspacesService,
   ) {}
@@ -42,7 +45,7 @@ export class CanvasService {
     userId: string,
     params: SpaceIdParams,
   ): Promise<CanvasStateRecord> {
-    const space = await this.requireSpaceAccess(userId, params.spaceId);
+    const space = await this.requireSpaceAccess(userId, params.spaceId, 'read');
 
     return this.getCanvasStateInScope(userId, {
       workspaceId: space.workspaceId,
@@ -55,7 +58,7 @@ export class CanvasService {
     userId: string,
     params: GroupIdParams,
   ): Promise<CanvasStateRecord> {
-    const group = await this.groupsService.requireGroupAccess(userId, params.groupId);
+    const group = await this.groupsService.requireGroupAccess(userId, params.groupId, 'read');
 
     return this.getCanvasStateInScope(userId, {
       workspaceId: group.workspaceId,
@@ -69,7 +72,7 @@ export class CanvasService {
     params: SpaceIdParams,
     payload: SaveCanvasStateRequest,
   ): Promise<CanvasStateRecord> {
-    const space = await this.requireSpaceAccess(userId, params.spaceId);
+    const space = await this.requireSpaceAccess(userId, params.spaceId, 'edit');
 
     return this.saveCanvasStateInScope(
       userId,
@@ -87,7 +90,7 @@ export class CanvasService {
     params: GroupIdParams,
     payload: SaveCanvasStateRequest,
   ): Promise<CanvasStateRecord> {
-    const group = await this.groupsService.requireGroupAccess(userId, params.groupId);
+    const group = await this.groupsService.requireGroupAccess(userId, params.groupId, 'edit');
 
     return this.saveCanvasStateInScope(
       userId,
@@ -192,7 +195,7 @@ export class CanvasService {
     },
   ): Promise<CanvasStateRecord> {
     const db = this.getDb();
-    await this.workspacesService.requireMembership(userId, scope.workspaceId);
+    await this.workspacesService.requirePermission(userId, scope.workspaceId, 'read');
     const [scopeEntities, scopeRelations, state] = await Promise.all([
       db
         .select()
@@ -244,7 +247,7 @@ export class CanvasService {
     payload: SaveCanvasStateRequest,
   ): Promise<CanvasStateRecord> {
     const db = this.getDb();
-    await this.workspacesService.requireMembership(userId, scope.workspaceId);
+    await this.workspacesService.requirePermission(userId, scope.workspaceId, 'edit');
     const [scopeEntities, scopeRelations] = await Promise.all([
       db
         .select()
@@ -329,6 +332,23 @@ export class CanvasService {
       });
     });
 
+    await this.workspaceActivityService.recordEvent({
+      workspaceId: scope.workspaceId,
+      spaceId: scope.spaceId,
+      groupId: scope.groupId,
+      actorUserId: userId,
+      eventType: 'canvas.updated',
+      targetType: scope.groupId ? 'group_canvas' : 'space_canvas',
+      targetId: scope.groupId ?? scope.spaceId,
+      summary: scope.groupId
+        ? 'Canvas layout updated in group context'
+        : 'Canvas layout updated in space context',
+      metadata: {
+        nodeCount: payload.nodes.length,
+        edgeCount: payload.edges.length,
+      },
+    });
+
     return this.getCanvasStateInScope(userId, scope);
   }
 
@@ -349,7 +369,11 @@ export class CanvasService {
     };
   }
 
-  private async requireSpaceAccess(userId: string, spaceId: string): Promise<typeof spaces.$inferSelect> {
+  private async requireSpaceAccess(
+    userId: string,
+    spaceId: string,
+    permission: 'read' | 'edit' | 'manage' = 'read',
+  ): Promise<typeof spaces.$inferSelect> {
     const db = this.getDb();
     const space = await db.query.spaces.findFirst({
       where: eq(spaces.id, spaceId),
@@ -359,7 +383,7 @@ export class CanvasService {
       throw new ApiException(HttpStatus.NOT_FOUND, 'NOT_FOUND', 'Space not found');
     }
 
-    await this.workspacesService.requireMembership(userId, space.workspaceId);
+    await this.workspacesService.requirePermission(userId, space.workspaceId, permission);
 
     return space;
   }

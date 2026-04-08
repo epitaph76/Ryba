@@ -295,6 +295,59 @@ textarea {
   color: #fecdd3;
 }
 
+.panel__fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.workspace-member-list {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.workspace-member-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(8, 15, 28, 0.42);
+}
+
+.workspace-member-card__identity {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.workspace-member-card__identity span {
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.workspace-member-card__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.workspace-member-card__actions select {
+  min-height: 40px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(6, 10, 20, 0.58);
+  color: var(--text);
+}
+
 .detail-form {
   display: grid;
   gap: 12px;

@@ -1,4 +1,5 @@
 import type {
+  ActivityEventRecord,
   ApiEnvelope,
   AuthSession,
   CanvasStateInput,
@@ -13,6 +14,7 @@ import type {
   SavedViewRecord,
   SpaceRecord,
   UserRecord,
+  WorkspaceMemberDetailRecord,
   WorkspaceRecord,
 } from '@ryba/types';
 
@@ -97,6 +99,57 @@ export const canvasApi = {
         method: 'POST',
         body: JSON.stringify(input),
       },
+      token,
+    );
+  },
+
+  listWorkspaceMembers(token: string, workspaceId: string) {
+    return request<ListResponse<WorkspaceMemberDetailRecord>>(
+      `/workspaces/${workspaceId}/members`,
+      { method: 'GET' },
+      token,
+    );
+  },
+
+  inviteWorkspaceMember(
+    token: string,
+    workspaceId: string,
+    input: {
+      email: string;
+      role: 'editor' | 'viewer';
+    },
+  ) {
+    return request<WorkspaceMemberDetailRecord>(
+      `/workspaces/${workspaceId}/members`,
+      {
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+      token,
+    );
+  },
+
+  updateWorkspaceMemberRole(
+    token: string,
+    membershipId: string,
+    input: {
+      role: 'editor' | 'viewer';
+    },
+  ) {
+    return request<WorkspaceMemberDetailRecord>(
+      `/workspaces/members/${membershipId}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(input),
+      },
+      token,
+    );
+  },
+
+  listWorkspaceActivity(token: string, workspaceId: string) {
+    return request<ListResponse<ActivityEventRecord>>(
+      `/workspaces/${workspaceId}/activity`,
+      { method: 'GET' },
       token,
     );
   },

@@ -17,6 +17,7 @@ import { DatabaseService } from '../database.service';
 import { toRelationRecord } from '../db/mappers';
 import { entities, relations, spaces } from '../db/schema';
 import { GroupsService } from '../groups/groups.service';
+import { WorkspaceActivityService } from '../workspaces/workspace-activity.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 
 type SpaceIdParams = z.infer<typeof spaceIdParamsSchema>;
@@ -32,6 +33,8 @@ export class RelationsService {
     private readonly databaseService: DatabaseService,
     @Inject(GroupsService)
     private readonly groupsService: GroupsService,
+    @Inject(WorkspaceActivityService)
+    private readonly workspaceActivityService: WorkspaceActivityService,
     @Inject(WorkspacesService)
     private readonly workspacesService: WorkspacesService,
   ) {}
@@ -41,7 +44,7 @@ export class RelationsService {
     params: SpaceIdParams,
     payload: CreateRelationRequest,
   ): Promise<RelationRecord> {
-    const space = await this.requireSpaceAccess(userId, params.spaceId);
+    const space = await this.requireSpaceAccess(userId, params.spaceId, 'edit');
 
     return this.createRelationInScope(
       userId,
@@ -59,7 +62,7 @@ export class RelationsService {
     params: GroupIdParams,
     payload: CreateRelationRequest,
   ): Promise<RelationRecord> {
-    const group = await this.groupsService.requireGroupAccess(userId, params.groupId);
+    const group = await this.groupsService.requireGroupAccess(userId, params.groupId, 'edit');
 
     return this.createRelationInScope(
       userId,
@@ -76,7 +79,7 @@ export class RelationsService {
     userId: string,
     params: SpaceIdParams,
   ): Promise<RelationRecord[]> {
-    const space = await this.requireSpaceAccess(userId, params.spaceId);
+    const space = await this.requireSpaceAccess(userId, params.spaceId, 'read');
 
     return this.listRelationsInScope(userId, {
       workspaceId: space.workspaceId,
@@ -86,7 +89,7 @@ export class RelationsService {
   }
 
   async listGroupRelations(userId: string, params: GroupIdParams): Promise<RelationRecord[]> {
-    const group = await this.groupsService.requireGroupAccess(userId, params.groupId);
+    const group = await this.groupsService.requireGroupAccess(userId, params.groupId, 'read');
 
     return this.listRelationsInScope(userId, {
       workspaceId: group.workspaceId,
@@ -101,7 +104,7 @@ export class RelationsService {
     payload: UpdateRelationRequest,
   ): Promise<RelationRecord> {
     const db = this.getDb();
-    const relation = await this.requireRelationAccess(userId, params.relationId);
+    const relation = await this.requireRelationAccess(userId, params.relationId, 'edit');
 
     const [updatedRelation] = await db
       .update(relations)
@@ -116,6 +119,21 @@ export class RelationsService {
       .where(eq(relations.id, relation.id))
       .returning();
 
+    await this.workspaceActivityService.recordEvent({
+      workspaceId: updatedRelation.workspaceId,
+      spaceId: updatedRelation.spaceId,
+      groupId: updatedRelation.groupId,
+      actorUserId: userId,
+      eventType: 'relation.updated',
+      targetType: 'relation',
+      targetId: updatedRelation.id,
+      summary: `Relation updated: ${updatedRelation.relationType}`,
+      metadata: {
+        fromEntityId: updatedRelation.fromEntityId,
+        toEntityId: updatedRelation.toEntityId,
+      },
+    });
+
     return toRelationRecord(updatedRelation);
   }
 
@@ -124,16 +142,35 @@ export class RelationsService {
     params: RelationIdParams,
   ): Promise<{ id: string }> {
     const db = this.getDb();
-    const relation = await this.requireRelationAccess(userId, params.relationId);
+    const relation = await this.requireRelationAccess(userId, params.relationId, 'edit');
 
     await db.delete(relations).where(eq(relations.id, relation.id));
+
+    await this.workspaceActivityService.recordEvent({
+      workspaceId: relation.workspaceId,
+      spaceId: relation.spaceId,
+      groupId: relation.groupId,
+      actorUserId: userId,
+      eventType: 'relation.deleted',
+      targetType: 'relation',
+      targetId: relation.id,
+      summary: `Relation deleted: ${relation.relationType}`,
+      metadata: {
+        fromEntityId: relation.fromEntityId,
+        toEntityId: relation.toEntityId,
+      },
+    });
 
     return {
       id: relation.id,
     };
   }
 
-  private async requireSpaceAccess(userId: string, spaceId: string): Promise<typeof spaces.$inferSelect> {
+  private async requireSpaceAccess(
+    userId: string,
+    spaceId: string,
+    permission: 'read' | 'edit' | 'manage' = 'read',
+  ): Promise<typeof spaces.$inferSelect> {
     const db = this.getDb();
     const space = await db.query.spaces.findFirst({
       where: eq(spaces.id, spaceId),
@@ -143,7 +180,7 @@ export class RelationsService {
       throw new ApiException(HttpStatus.NOT_FOUND, 'NOT_FOUND', 'Space not found');
     }
 
-    await this.workspacesService.requireMembership(userId, space.workspaceId);
+    await this.workspacesService.requirePermission(userId, space.workspaceId, permission);
 
     return space;
   }
@@ -216,6 +253,21 @@ export class RelationsService {
       })
       .returning();
 
+    await this.workspaceActivityService.recordEvent({
+      workspaceId: insertedRelation.workspaceId,
+      spaceId: insertedRelation.spaceId,
+      groupId: insertedRelation.groupId,
+      actorUserId: userId,
+      eventType: 'relation.created',
+      targetType: 'relation',
+      targetId: insertedRelation.id,
+      summary: `Relation created: ${insertedRelation.relationType}`,
+      metadata: {
+        fromEntityId: insertedRelation.fromEntityId,
+        toEntityId: insertedRelation.toEntityId,
+      },
+    });
+
     return toRelationRecord(insertedRelation);
   }
 
@@ -228,7 +280,7 @@ export class RelationsService {
     },
   ): Promise<RelationRecord[]> {
     const db = this.getDb();
-    await this.workspacesService.requireMembership(userId, scope.workspaceId);
+    await this.workspacesService.requirePermission(userId, scope.workspaceId, 'read');
 
     const rows = await db
       .select()
@@ -248,6 +300,7 @@ export class RelationsService {
   private async requireRelationAccess(
     userId: string,
     relationId: string,
+    permission: 'read' | 'edit' | 'manage' = 'read',
   ): Promise<typeof relations.$inferSelect> {
     const db = this.getDb();
     const relation = await db.query.relations.findFirst({
@@ -258,7 +311,7 @@ export class RelationsService {
       throw new ApiException(HttpStatus.NOT_FOUND, 'NOT_FOUND', 'Relation not found');
     }
 
-    await this.workspacesService.requireMembership(userId, relation.workspaceId);
+    await this.workspacesService.requirePermission(userId, relation.workspaceId, permission);
 
     return relation;
   }

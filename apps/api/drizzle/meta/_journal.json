@@ -50,6 +50,13 @@
       "when": 1775675043557,
       "tag": "0006_outgoing_captain_marvel",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1775677942103,
+      "tag": "0007_outgoing_zaran",
+      "breakpoints": true
     }
   ]
 }

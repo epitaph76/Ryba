@@ -134,6 +134,36 @@ export const groups = pgTable(
   }),
 );
 
+export const activityEvents = pgTable(
+  'activity_events',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    spaceId: text('space_id').references(() => spaces.id, { onDelete: 'cascade' }),
+    groupId: text('group_id').references(() => groups.id, { onDelete: 'cascade' }),
+    actorUserId: text('actor_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    eventType: text('event_type').notNull(),
+    targetType: text('target_type').notNull(),
+    targetId: text('target_id').notNull(),
+    summary: text('summary').notNull(),
+    metadata: jsonb('metadata').notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { mode: 'string', withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    workspaceIdx: index('activity_events_workspace_idx').on(table.workspaceId),
+    spaceIdx: index('activity_events_space_idx').on(table.spaceId),
+    groupIdx: index('activity_events_group_idx').on(table.groupId),
+    actorIdx: index('activity_events_actor_idx').on(table.actorUserId),
+    createdAtIdx: index('activity_events_created_at_idx').on(table.createdAt),
+  }),
+);
+
 export const spaceCanvasStates = pgTable(
   'space_canvas_states',
   {

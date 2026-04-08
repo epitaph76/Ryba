@@ -45,6 +45,7 @@ import {
 import { documentEntityMentions, documents, entities, relations, spaces } from '../db/schema';
 import { EntityTypesService } from '../entity-types/entity-types.service';
 import { GroupsService } from '../groups/groups.service';
+import { WorkspaceActivityService } from '../workspaces/workspace-activity.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 
 type SpaceIdParams = z.infer<typeof spaceIdParamsSchema>;
@@ -78,12 +79,14 @@ export class DocumentsService {
     private readonly entityTypesService: EntityTypesService,
     @Inject(GroupsService)
     private readonly groupsService: GroupsService,
+    @Inject(WorkspaceActivityService)
+    private readonly workspaceActivityService: WorkspaceActivityService,
     @Inject(WorkspacesService)
     private readonly workspacesService: WorkspacesService,
   ) {}
 
   async listDocuments(userId: string, params: SpaceIdParams): Promise<DocumentRecord[]> {
-    const space = await this.requireSpaceAccess(userId, params.spaceId);
+    const space = await this.requireSpaceAccess(userId, params.spaceId, 'read');
 
     return this.listDocumentsInScope(userId, {
       workspaceId: space.workspaceId,
@@ -93,7 +96,7 @@ export class DocumentsService {
   }
 
   async listGroupDocuments(userId: string, params: GroupIdParams): Promise<DocumentRecord[]> {
-    const group = await this.groupsService.requireGroupAccess(userId, params.groupId);
+    const group = await this.groupsService.requireGroupAccess(userId, params.groupId, 'read');
 
     return this.listDocumentsInScope(userId, {
       workspaceId: group.workspaceId,
@@ -107,7 +110,7 @@ export class DocumentsService {
     params: SpaceIdParams,
     payload: CreateDocumentRequest,
   ): Promise<DocumentDetailRecord> {
-    const space = await this.requireSpaceAccess(userId, params.spaceId);
+    const space = await this.requireSpaceAccess(userId, params.spaceId, 'edit');
     const entity = await this.createBackingEntity(userId, space, null, payload.title.trim(), payload.body);
 
     return this.createDocumentForEntity(userId, entity, {
@@ -121,8 +124,8 @@ export class DocumentsService {
     params: GroupIdParams,
     payload: CreateDocumentRequest,
   ): Promise<DocumentDetailRecord> {
-    const group = await this.groupsService.requireGroupAccess(userId, params.groupId);
-    const space = await this.requireSpaceAccess(userId, group.spaceId);
+    const group = await this.groupsService.requireGroupAccess(userId, params.groupId, 'edit');
+    const space = await this.requireSpaceAccess(userId, group.spaceId, 'edit');
     const entity = await this.createBackingEntity(
       userId,
       space,
@@ -138,13 +141,13 @@ export class DocumentsService {
   }
 
   async getDocument(userId: string, params: DocumentIdParams): Promise<DocumentDetailRecord> {
-    const document = await this.requireDocumentAccess(userId, params.documentId);
+    const document = await this.requireDocumentAccess(userId, params.documentId, 'read');
 
     return this.buildDocumentDetail(document);
   }
 
   async getDocumentForEntity(userId: string, params: EntityIdParams): Promise<DocumentDetailRecord> {
-    const entity = await this.requireEntityAccess(userId, params.entityId);
+    const entity = await this.requireEntityAccess(userId, params.entityId, 'read');
     const document = await this.findDocumentByEntityId(entity.id);
 
     if (!document) {
@@ -159,8 +162,8 @@ export class DocumentsService {
     params: DocumentIdParams,
     payload: UpdateDocumentRequest,
   ): Promise<DocumentDetailRecord> {
-    const document = await this.requireDocumentAccess(userId, params.documentId);
-    const entity = await this.requireEntityAccess(userId, document.entityId);
+    const document = await this.requireDocumentAccess(userId, params.documentId, 'edit');
+    const entity = await this.requireEntityAccess(userId, document.entityId, 'edit');
 
     return this.persistDocument(userId, entity, document, payload);
   }
@@ -170,7 +173,7 @@ export class DocumentsService {
     params: EntityIdParams,
     payload: UpsertEntityDocumentRequest,
   ): Promise<DocumentDetailRecord> {
-    const entity = await this.requireEntityAccess(userId, params.entityId);
+    const entity = await this.requireEntityAccess(userId, params.entityId, 'edit');
     const existing = await this.findDocumentByEntityId(entity.id);
 
     if (existing) {
@@ -185,7 +188,7 @@ export class DocumentsService {
     params: EntityIdParams,
   ): Promise<DocumentBacklinkRecord[]> {
     const db = this.getDb();
-    const entity = await this.requireEntityAccess(userId, params.entityId);
+    const entity = await this.requireEntityAccess(userId, params.entityId, 'read');
 
     const rows = await db
       .select({
@@ -209,7 +212,7 @@ export class DocumentsService {
     },
   ): Promise<DocumentRecord[]> {
     const db = this.getDb();
-    await this.workspacesService.requireMembership(userId, scope.workspaceId);
+    await this.workspacesService.requirePermission(userId, scope.workspaceId, 'read');
 
     const rows = await db
       .select()
@@ -307,6 +310,20 @@ export class DocumentsService {
       mentions: mentionRows,
     });
 
+    await this.workspaceActivityService.recordEvent({
+      workspaceId: entity.workspaceId,
+      spaceId: entity.spaceId,
+      groupId: entity.groupId,
+      actorUserId: userId,
+      eventType: 'document.created',
+      targetType: 'document',
+      targetId: documentId,
+      summary: `Document created: ${title}`,
+      metadata: {
+        entityId: entity.id,
+      },
+    });
+
     return this.getDocument(userId, { documentId });
   }
 
@@ -387,6 +404,20 @@ export class DocumentsService {
       groupId: entity.groupId,
       sourceEntityId: entity.id,
       mentions: mentionRows,
+    });
+
+    await this.workspaceActivityService.recordEvent({
+      workspaceId: entity.workspaceId,
+      spaceId: entity.spaceId,
+      groupId: entity.groupId,
+      actorUserId: userId,
+      eventType: 'document.updated',
+      targetType: 'document',
+      targetId: document.id,
+      summary: `Document updated: ${nextTitle}`,
+      metadata: {
+        entityId: entity.id,
+      },
     });
 
     return this.getDocument(userId, { documentId: document.id });
@@ -966,7 +997,11 @@ export class DocumentsService {
     );
   }
 
-  private async requireDocumentAccess(userId: string, documentId: string): Promise<DocumentRow> {
+  private async requireDocumentAccess(
+    userId: string,
+    documentId: string,
+    permission: 'read' | 'edit' | 'manage' = 'read',
+  ): Promise<DocumentRow> {
     const db = this.getDb();
     const document = await db.query.documents.findFirst({
       where: eq(documents.id, documentId),
@@ -976,14 +1011,18 @@ export class DocumentsService {
       throw new ApiException(HttpStatus.NOT_FOUND, 'NOT_FOUND', 'Document not found');
     }
 
-    await this.workspacesService.requireMembership(userId, document.workspaceId);
+    await this.workspacesService.requirePermission(userId, document.workspaceId, permission);
 
     return document;
   }
 
-  private async requireEntityAccess(userId: string, entityId: string): Promise<EntityRow> {
+  private async requireEntityAccess(
+    userId: string,
+    entityId: string,
+    permission: 'read' | 'edit' | 'manage' = 'read',
+  ): Promise<EntityRow> {
     const entity = await this.requireEntityByWorkspace(null, entityId);
-    await this.workspacesService.requireMembership(userId, entity.workspaceId);
+    await this.workspacesService.requirePermission(userId, entity.workspaceId, permission);
     return entity;
   }
 
@@ -1003,7 +1042,11 @@ export class DocumentsService {
     return entity;
   }
 
-  private async requireSpaceAccess(userId: string, spaceId: string): Promise<SpaceRow> {
+  private async requireSpaceAccess(
+    userId: string,
+    spaceId: string,
+    permission: 'read' | 'edit' | 'manage' = 'read',
+  ): Promise<SpaceRow> {
     const db = this.getDb();
     const space = await db.query.spaces.findFirst({
       where: eq(spaces.id, spaceId),
@@ -1013,7 +1056,7 @@ export class DocumentsService {
       throw new ApiException(HttpStatus.NOT_FOUND, 'NOT_FOUND', 'Space not found');
     }
 
-    await this.workspacesService.requireMembership(userId, space.workspaceId);
+    await this.workspacesService.requirePermission(userId, space.workspaceId, permission);
 
     return space;
   }

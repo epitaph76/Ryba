@@ -1,11 +1,11 @@
-import type { UserId } from './user';
+import type { UserId, UserRecord } from './user';
 
 export type WorkspaceId = string;
 export type WorkspaceMemberId = string;
 export type SpaceId = string;
 export type GroupId = string;
 
-export type WorkspaceRole = 'owner' | 'member';
+export type WorkspaceRole = 'owner' | 'editor' | 'viewer';
 
 export interface WorkspaceRecord {
   id: WorkspaceId;
@@ -23,6 +23,10 @@ export interface WorkspaceMemberRecord {
   role: WorkspaceRole;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface WorkspaceMemberDetailRecord extends WorkspaceMemberRecord {
+  user: Pick<UserRecord, 'id' | 'email' | 'displayName'>;
 }
 
 export interface SpaceRecord {

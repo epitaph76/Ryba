@@ -1,5 +1,7 @@
 import { canvasLayoutSchema, documentBlockSchema, savedViewConfigSchema } from '@ryba/schemas';
 import type {
+  ActivityActorRecord,
+  ActivityEventRecord,
   CanvasStateRecord,
   DocumentBacklinkRecord,
   DocumentEntityPreview,
@@ -13,11 +15,13 @@ import type {
   SavedViewRecord,
   SpaceRecord,
   UserRecord,
+  WorkspaceMemberDetailRecord,
   WorkspaceMemberRecord,
   WorkspaceRecord,
 } from '@ryba/types';
 
 import type {
+  activityEvents,
   entities,
   entityTypeFields,
   entityTypes,
@@ -37,6 +41,7 @@ import type {
 type UserRow = typeof users.$inferSelect;
 type WorkspaceRow = typeof workspaces.$inferSelect;
 type WorkspaceMemberRow = typeof workspaceMembers.$inferSelect;
+type ActivityEventRow = typeof activityEvents.$inferSelect;
 type SpaceRow = typeof spaces.$inferSelect;
 type GroupRow = typeof groups.$inferSelect;
 type EntityRow = typeof entities.$inferSelect;
@@ -80,10 +85,56 @@ export const toWorkspaceMemberRecord = (
   id: row.id,
   workspaceId: row.workspaceId,
   userId: row.userId,
-  role: row.role as WorkspaceMemberRecord['role'],
+  role: normalizeWorkspaceRole(row.role),
   createdAt: row.createdAt,
   updatedAt: row.updatedAt,
 });
+
+export const toWorkspaceMemberDetailRecord = (
+  row: WorkspaceMemberRow,
+  user: Pick<UserRow, 'id' | 'email' | 'displayName'>,
+): WorkspaceMemberDetailRecord => ({
+  ...toWorkspaceMemberRecord(row),
+  user: {
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName,
+  },
+});
+
+export const toActivityActorRecord = (
+  row: Pick<UserRow, 'id' | 'email' | 'displayName'>,
+): ActivityActorRecord => ({
+  id: row.id,
+  email: row.email,
+  displayName: row.displayName,
+});
+
+export const toActivityEventRecord = (
+  row: ActivityEventRow,
+  actor: ActivityActorRecord,
+): ActivityEventRecord => ({
+  id: row.id,
+  workspaceId: row.workspaceId,
+  spaceId: row.spaceId,
+  groupId: row.groupId,
+  actorUserId: row.actorUserId,
+  eventType: row.eventType,
+  targetType: row.targetType,
+  targetId: row.targetId,
+  summary: row.summary,
+  metadata: ensureJsonObject(row.metadata),
+  createdAt: row.createdAt,
+  actor,
+});
+
+const normalizeWorkspaceRole = (role: string): WorkspaceMemberRecord['role'] => {
+  if (role === 'member') {
+    return 'editor';
+  }
+
+  return role as WorkspaceMemberRecord['role'];
+};
 
 export const toSpaceRecord = (row: SpaceRow): SpaceRecord => ({
   id: row.id,

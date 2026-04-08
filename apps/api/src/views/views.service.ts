@@ -17,6 +17,7 @@ import { DatabaseService } from '../database.service';
 import { toSavedViewRecord } from '../db/mappers';
 import { entityTypes, savedViews, spaces } from '../db/schema';
 import { GroupsService } from '../groups/groups.service';
+import { WorkspaceActivityService } from '../workspaces/workspace-activity.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 
 type SpaceIdParams = z.infer<typeof spaceIdParamsSchema>;
@@ -32,12 +33,14 @@ export class ViewsService {
     private readonly databaseService: DatabaseService,
     @Inject(GroupsService)
     private readonly groupsService: GroupsService,
+    @Inject(WorkspaceActivityService)
+    private readonly workspaceActivityService: WorkspaceActivityService,
     @Inject(WorkspacesService)
     private readonly workspacesService: WorkspacesService,
   ) {}
 
   async listSavedViews(userId: string, params: SpaceIdParams): Promise<SavedViewRecord[]> {
-    const space = await this.requireSpaceAccess(userId, params.spaceId);
+    const space = await this.requireSpaceAccess(userId, params.spaceId, 'read');
 
     return this.listSavedViewsInScope(userId, {
       workspaceId: space.workspaceId,
@@ -47,7 +50,7 @@ export class ViewsService {
   }
 
   async listGroupSavedViews(userId: string, params: GroupIdParams): Promise<SavedViewRecord[]> {
-    const group = await this.groupsService.requireGroupAccess(userId, params.groupId);
+    const group = await this.groupsService.requireGroupAccess(userId, params.groupId, 'read');
 
     return this.listSavedViewsInScope(userId, {
       workspaceId: group.workspaceId,
@@ -61,7 +64,7 @@ export class ViewsService {
     params: SpaceIdParams,
     payload: CreateSavedViewRequest,
   ): Promise<SavedViewRecord> {
-    const space = await this.requireSpaceAccess(userId, params.spaceId);
+    const space = await this.requireSpaceAccess(userId, params.spaceId, 'edit');
 
     return this.createSavedViewInScope(
       userId,
@@ -79,7 +82,7 @@ export class ViewsService {
     params: GroupIdParams,
     payload: CreateSavedViewRequest,
   ): Promise<SavedViewRecord> {
-    const group = await this.groupsService.requireGroupAccess(userId, params.groupId);
+    const group = await this.groupsService.requireGroupAccess(userId, params.groupId, 'edit');
 
     return this.createSavedViewInScope(
       userId,
@@ -98,7 +101,7 @@ export class ViewsService {
     payload: UpdateSavedViewRequest,
   ): Promise<SavedViewRecord> {
     const db = this.getDb();
-    const current = await this.requireSavedViewAccess(userId, params.savedViewId);
+    const current = await this.requireSavedViewAccess(userId, params.savedViewId, 'edit');
 
     if (payload.entityTypeId !== undefined) {
       await this.ensureEntityTypeBelongsToWorkspace(current.workspaceId, payload.entityTypeId);
@@ -118,21 +121,53 @@ export class ViewsService {
       .where(eq(savedViews.id, current.id))
       .returning();
 
+    await this.workspaceActivityService.recordEvent({
+      workspaceId: updated.workspaceId,
+      spaceId: updated.spaceId,
+      groupId: updated.groupId,
+      actorUserId: userId,
+      eventType: 'saved_view.updated',
+      targetType: 'saved_view',
+      targetId: updated.id,
+      summary: `Saved view updated: ${updated.name}`,
+      metadata: {
+        viewType: updated.viewType,
+      },
+    });
+
     return toSavedViewRecord(updated);
   }
 
   async deleteSavedView(userId: string, params: SavedViewIdParams): Promise<{ id: string }> {
     const db = this.getDb();
-    const current = await this.requireSavedViewAccess(userId, params.savedViewId);
+    const current = await this.requireSavedViewAccess(userId, params.savedViewId, 'edit');
 
     await db.delete(savedViews).where(eq(savedViews.id, current.id));
+
+    await this.workspaceActivityService.recordEvent({
+      workspaceId: current.workspaceId,
+      spaceId: current.spaceId,
+      groupId: current.groupId,
+      actorUserId: userId,
+      eventType: 'saved_view.deleted',
+      targetType: 'saved_view',
+      targetId: current.id,
+      summary: `Saved view deleted: ${current.name}`,
+      metadata: {
+        viewType: current.viewType,
+      },
+    });
 
     return {
       id: current.id,
     };
   }
 
-  private async requireSpaceAccess(userId: string, spaceId: string): Promise<typeof spaces.$inferSelect> {
+  private async requireSpaceAccess(
+    userId: string,
+    spaceId: string,
+    permission: 'read' | 'edit' | 'manage' = 'read',
+  ): Promise<typeof spaces.$inferSelect> {
     const db = this.getDb();
     const space = await db.query.spaces.findFirst({
       where: eq(spaces.id, spaceId),
@@ -142,7 +177,7 @@ export class ViewsService {
       throw new ApiException(HttpStatus.NOT_FOUND, 'NOT_FOUND', 'Space not found');
     }
 
-    await this.workspacesService.requireMembership(userId, space.workspaceId);
+    await this.workspacesService.requirePermission(userId, space.workspaceId, permission);
 
     return space;
   }
@@ -156,7 +191,7 @@ export class ViewsService {
     },
   ): Promise<SavedViewRecord[]> {
     const db = this.getDb();
-    await this.workspacesService.requireMembership(userId, scope.workspaceId);
+    await this.workspacesService.requirePermission(userId, scope.workspaceId, 'read');
 
     const rows = await db
       .select()
@@ -202,12 +237,27 @@ export class ViewsService {
       })
       .returning();
 
+    await this.workspaceActivityService.recordEvent({
+      workspaceId: inserted.workspaceId,
+      spaceId: inserted.spaceId,
+      groupId: inserted.groupId,
+      actorUserId: userId,
+      eventType: 'saved_view.created',
+      targetType: 'saved_view',
+      targetId: inserted.id,
+      summary: `Saved view created: ${inserted.name}`,
+      metadata: {
+        viewType: inserted.viewType,
+      },
+    });
+
     return toSavedViewRecord(inserted);
   }
 
   private async requireSavedViewAccess(
     userId: string,
     savedViewId: string,
+    permission: 'read' | 'edit' | 'manage' = 'read',
   ): Promise<typeof savedViews.$inferSelect> {
     const db = this.getDb();
     const row = await db.query.savedViews.findFirst({
@@ -218,7 +268,7 @@ export class ViewsService {
       throw new ApiException(HttpStatus.NOT_FOUND, 'NOT_FOUND', 'Saved view not found');
     }
 
-    await this.workspacesService.requireMembership(userId, row.workspaceId);
+    await this.workspacesService.requirePermission(userId, row.workspaceId, permission);
 
     return row;
   }

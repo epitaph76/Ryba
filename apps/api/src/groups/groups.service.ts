@@ -14,6 +14,7 @@ import { ApiException } from '../common/api-exception';
 import { DatabaseService } from '../database.service';
 import { toGroupRecord } from '../db/mappers';
 import { groups, spaces } from '../db/schema';
+import { WorkspaceActivityService } from '../workspaces/workspace-activity.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 
 type SpaceIdParams = z.infer<typeof spaceIdParamsSchema>;
@@ -25,6 +26,8 @@ export class GroupsService {
   constructor(
     @Inject(DatabaseService)
     private readonly databaseService: DatabaseService,
+    @Inject(WorkspaceActivityService)
+    private readonly workspaceActivityService: WorkspaceActivityService,
     @Inject(WorkspacesService)
     private readonly workspacesService: WorkspacesService,
   ) {}
@@ -35,7 +38,7 @@ export class GroupsService {
     payload: CreateGroupRequest,
   ): Promise<GroupRecord> {
     const db = this.getDb();
-    const space = await this.requireSpaceAccess(userId, params.spaceId);
+    const space = await this.requireSpaceAccess(userId, params.spaceId, 'manage');
     const slug = payload.slug.trim().toLowerCase();
     const existingGroup = await db.query.groups.findFirst({
       where: and(eq(groups.spaceId, space.id), eq(groups.slug, slug)),
@@ -62,12 +65,26 @@ export class GroupsService {
       })
       .returning();
 
+    await this.workspaceActivityService.recordEvent({
+      workspaceId: insertedGroup.workspaceId,
+      spaceId: insertedGroup.spaceId,
+      groupId: insertedGroup.id,
+      actorUserId: userId,
+      eventType: 'group.created',
+      targetType: 'group',
+      targetId: insertedGroup.id,
+      summary: `Group created: ${insertedGroup.name}`,
+      metadata: {
+        slug: insertedGroup.slug,
+      },
+    });
+
     return toGroupRecord(insertedGroup);
   }
 
   async listGroups(userId: string, params: SpaceIdParams): Promise<GroupRecord[]> {
     const db = this.getDb();
-    const space = await this.requireSpaceAccess(userId, params.spaceId);
+    const space = await this.requireSpaceAccess(userId, params.spaceId, 'read');
 
     const rows = await db
       .select()
@@ -81,6 +98,7 @@ export class GroupsService {
   async requireGroupAccess(
     userId: string,
     groupId: string | GroupIdParams,
+    permission: 'read' | 'edit' | 'manage' = 'read',
   ): Promise<typeof groups.$inferSelect> {
     const db = this.getDb();
     const resolvedGroupId = typeof groupId === 'string' ? groupId : groupId.groupId;
@@ -92,12 +110,16 @@ export class GroupsService {
       throw new ApiException(HttpStatus.NOT_FOUND, 'NOT_FOUND', 'Group not found');
     }
 
-    await this.workspacesService.requireMembership(userId, group.workspaceId);
+    await this.workspacesService.requirePermission(userId, group.workspaceId, permission);
 
     return group;
   }
 
-  private async requireSpaceAccess(userId: string, spaceId: string): Promise<typeof spaces.$inferSelect> {
+  private async requireSpaceAccess(
+    userId: string,
+    spaceId: string,
+    permission: 'read' | 'edit' | 'manage' = 'read',
+  ): Promise<typeof spaces.$inferSelect> {
     const db = this.getDb();
     const space = await db.query.spaces.findFirst({
       where: eq(spaces.id, spaceId),
@@ -107,7 +129,7 @@ export class GroupsService {
       throw new ApiException(HttpStatus.NOT_FOUND, 'NOT_FOUND', 'Space not found');
     }
 
-    await this.workspacesService.requireMembership(userId, space.workspaceId);
+    await this.workspacesService.requirePermission(userId, space.workspaceId, permission);
 
     return space;
   }

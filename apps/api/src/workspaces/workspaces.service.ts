@@ -3,22 +3,64 @@ import { randomUUID } from 'node:crypto';
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq } from 'drizzle-orm';
 import type { z } from 'zod';
-import { createWorkspaceRequestSchema } from '@ryba/schemas';
-import type { WorkspaceMemberRecord, WorkspaceRecord } from '@ryba/types';
+import {
+  createWorkspaceRequestSchema,
+  inviteWorkspaceMemberRequestSchema,
+  updateWorkspaceMemberRoleRequestSchema,
+  workspaceIdParamsSchema,
+  workspaceMemberIdParamsSchema,
+} from '@ryba/schemas';
+import type {
+  WorkspaceMemberDetailRecord,
+  WorkspaceMemberRecord,
+  WorkspaceRecord,
+  WorkspaceRole,
+} from '@ryba/types';
 
 import { ApiException } from '../common/api-exception';
 import { DatabaseService } from '../database.service';
-import { toWorkspaceMemberRecord, toWorkspaceRecord } from '../db/mappers';
-import { entityTypeFields, entityTypes, workspaceMembers, workspaces } from '../db/schema';
+import {
+  toWorkspaceMemberDetailRecord,
+  toWorkspaceMemberRecord,
+  toWorkspaceRecord,
+} from '../db/mappers';
+import {
+  entityTypeFields,
+  entityTypes,
+  users,
+  workspaceMembers,
+  workspaces,
+} from '../db/schema';
 import { DEFAULT_ENTITY_TYPE_TEMPLATES } from '../entity-types/entity-type-templates';
 import { normalizeFieldConfig } from '../entity-types/entity-value';
+import { WorkspaceActivityService } from './workspace-activity.service';
 
 type CreateWorkspaceRequest = z.infer<typeof createWorkspaceRequestSchema>;
+type WorkspaceIdParams = z.infer<typeof workspaceIdParamsSchema>;
+type WorkspaceMemberIdParams = z.infer<typeof workspaceMemberIdParamsSchema>;
+type InviteWorkspaceMemberRequest = z.infer<typeof inviteWorkspaceMemberRequestSchema>;
+type UpdateWorkspaceMemberRoleRequest = z.infer<typeof updateWorkspaceMemberRoleRequestSchema>;
+type WorkspacePermissionLevel = 'read' | 'edit' | 'manage';
+
+const workspaceRoleRank: Record<WorkspaceRole, number> = {
+  viewer: 1,
+  editor: 2,
+  owner: 3,
+};
+
+const requiredRankByPermission: Record<WorkspacePermissionLevel, number> = {
+  read: workspaceRoleRank.viewer,
+  edit: workspaceRoleRank.editor,
+  manage: workspaceRoleRank.owner,
+};
 
 @Injectable()
 export class WorkspacesService {
   constructor(
-    @Inject(DatabaseService) private readonly databaseService: DatabaseService,
+    @Inject(DatabaseService)
+    private readonly databaseService: DatabaseService,
+    @Inject(WorkspaceActivityService)
+    private readonly workspaceActivityService: WorkspaceActivityService,
   ) {}
 
   async createWorkspace(
@@ -142,9 +184,179 @@ export class WorkspacesService {
     return rows.map((row) => toWorkspaceRecord(row.workspace));
   }
 
+  async listMembers(
+    userId: string,
+    params: WorkspaceIdParams,
+  ): Promise<WorkspaceMemberDetailRecord[]> {
+    const db = this.getDb();
+    await this.requirePermission(userId, params.workspaceId, 'read');
+
+    const rows = await db
+      .select({
+        membership: workspaceMembers,
+        user: users,
+      })
+      .from(workspaceMembers)
+      .innerJoin(users, eq(workspaceMembers.userId, users.id))
+      .where(eq(workspaceMembers.workspaceId, params.workspaceId))
+      .orderBy(asc(workspaceMembers.createdAt));
+
+    return rows.map((row) => toWorkspaceMemberDetailRecord(row.membership, row.user));
+  }
+
+  async inviteMember(
+    userId: string,
+    params: WorkspaceIdParams,
+    payload: InviteWorkspaceMemberRequest,
+  ): Promise<WorkspaceMemberDetailRecord> {
+    const db = this.getDb();
+    const email = payload.email.trim().toLowerCase();
+    await this.requirePermission(userId, params.workspaceId, 'manage');
+
+    const [workspace, targetUser] = await Promise.all([
+      db.query.workspaces.findFirst({
+        where: eq(workspaces.id, params.workspaceId),
+      }),
+      db.query.users.findFirst({
+        where: eq(users.email, email),
+      }),
+    ]);
+
+    if (!workspace) {
+      throw new ApiException(HttpStatus.NOT_FOUND, 'NOT_FOUND', 'Workspace not found');
+    }
+
+    if (!targetUser) {
+      throw new ApiException(
+        HttpStatus.BAD_REQUEST,
+        'VALIDATION_ERROR',
+        'User must register before being added to a workspace',
+        {
+          email,
+        },
+      );
+    }
+
+    const duplicateMembership = await db.query.workspaceMembers.findFirst({
+      where: and(
+        eq(workspaceMembers.workspaceId, params.workspaceId),
+        eq(workspaceMembers.userId, targetUser.id),
+      ),
+    });
+
+    if (duplicateMembership) {
+      throw new ApiException(
+        HttpStatus.CONFLICT,
+        'CONFLICT',
+        'User is already a workspace member',
+      );
+    }
+
+    const [insertedMembership] = await db
+      .insert(workspaceMembers)
+      .values({
+        id: randomUUID(),
+        workspaceId: workspace.id,
+        userId: targetUser.id,
+        role: payload.role,
+      })
+      .returning();
+
+    await this.workspaceActivityService.recordEvent({
+      workspaceId: workspace.id,
+      actorUserId: userId,
+      eventType: 'workspace.member_added',
+      targetType: 'workspace_member',
+      targetId: insertedMembership.id,
+      summary: `Access granted to ${targetUser.email} as ${payload.role}`,
+      metadata: {
+        memberUserId: targetUser.id,
+        memberEmail: targetUser.email,
+        role: payload.role,
+      },
+    });
+
+    return toWorkspaceMemberDetailRecord(insertedMembership, targetUser);
+  }
+
+  async updateMemberRole(
+    userId: string,
+    params: WorkspaceMemberIdParams,
+    payload: UpdateWorkspaceMemberRoleRequest,
+  ): Promise<WorkspaceMemberDetailRecord> {
+    const db = this.getDb();
+    const targetMembership = await db.query.workspaceMembers.findFirst({
+      where: eq(workspaceMembers.id, params.membershipId),
+    });
+
+    if (!targetMembership) {
+      throw new ApiException(HttpStatus.NOT_FOUND, 'NOT_FOUND', 'Workspace member not found');
+    }
+
+    await this.requirePermission(userId, targetMembership.workspaceId, 'manage');
+
+    const workspace = await db.query.workspaces.findFirst({
+      where: eq(workspaces.id, targetMembership.workspaceId),
+    });
+
+    if (!workspace) {
+      throw new ApiException(HttpStatus.NOT_FOUND, 'NOT_FOUND', 'Workspace not found');
+    }
+
+    if (targetMembership.userId === workspace.ownerUserId || targetMembership.role === 'owner') {
+      throw new ApiException(
+        HttpStatus.BAD_REQUEST,
+        'VALIDATION_ERROR',
+        'Workspace owner role cannot be reassigned here',
+      );
+    }
+
+    const targetUser = await db.query.users.findFirst({
+      where: eq(users.id, targetMembership.userId),
+    });
+
+    if (!targetUser) {
+      throw new ApiException(HttpStatus.NOT_FOUND, 'NOT_FOUND', 'User not found');
+    }
+
+    const [updatedMembership] = await db
+      .update(workspaceMembers)
+      .set({
+        role: payload.role,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(workspaceMembers.id, targetMembership.id))
+      .returning();
+
+    await this.workspaceActivityService.recordEvent({
+      workspaceId: targetMembership.workspaceId,
+      actorUserId: userId,
+      eventType: 'workspace.member_role_changed',
+      targetType: 'workspace_member',
+      targetId: updatedMembership.id,
+      summary: `Role updated for ${targetUser.email}: ${payload.role}`,
+      metadata: {
+        memberUserId: targetUser.id,
+        memberEmail: targetUser.email,
+        previousRole: targetMembership.role,
+        role: payload.role,
+      },
+    });
+
+    return toWorkspaceMemberDetailRecord(updatedMembership, targetUser);
+  }
+
   async requireMembership(
     userId: string,
     workspaceId: string,
+  ): Promise<WorkspaceMemberRecord> {
+    return this.requirePermission(userId, workspaceId, 'read');
+  }
+
+  async requirePermission(
+    userId: string,
+    workspaceId: string,
+    permission: WorkspacePermissionLevel,
   ): Promise<WorkspaceMemberRecord> {
     const db = this.getDb();
 
@@ -163,7 +375,19 @@ export class WorkspacesService {
       );
     }
 
-    return toWorkspaceMemberRecord(membership);
+    const record = toWorkspaceMemberRecord(membership);
+
+    if (workspaceRoleRank[record.role] < requiredRankByPermission[permission]) {
+      throw new ApiException(
+        HttpStatus.FORBIDDEN,
+        'FORBIDDEN',
+        permission === 'manage'
+          ? 'Only workspace owners can manage this workspace'
+          : 'You do not have permission to modify this workspace',
+      );
+    }
+
+    return record;
   }
 
   private getDb() {

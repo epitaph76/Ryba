@@ -5,6 +5,7 @@ type SavedViewsBarProps = {
   savedViews: SavedViewRecord[];
   activeSavedViewId: string | null;
   disabled: boolean;
+  persistDisabled: boolean;
   busy: boolean;
   onSelectSavedView: (savedViewId: string | null) => void;
   onCreateSavedView: (name: string) => void;
@@ -17,6 +18,7 @@ export function SavedViewsBar({
   savedViews,
   activeSavedViewId,
   disabled,
+  persistDisabled,
   busy,
   onSelectSavedView,
   onCreateSavedView,
@@ -71,14 +73,14 @@ export function SavedViewsBar({
             value={draftName}
             onChange={(event) => setDraftName(event.target.value)}
             placeholder="Например, Мои активные задачи"
-            disabled={disabled || busy}
+            disabled={disabled || busy || persistDisabled}
           />
         </label>
         <div className="actions">
           <button
             type="button"
             className="button"
-            disabled={disabled || busy || draftName.trim().length === 0}
+            disabled={disabled || busy || persistDisabled || draftName.trim().length === 0}
             onClick={() => {
               onCreateSavedView(draftName.trim());
               setDraftName('');
@@ -89,7 +91,7 @@ export function SavedViewsBar({
           <button
             type="button"
             className="button button--ghost"
-            disabled={disabled || busy || !activeSavedView}
+            disabled={disabled || busy || persistDisabled || !activeSavedView}
             onClick={() => activeSavedView && onOverwriteSavedView(activeSavedView.id)}
           >
             Обновить текущее
@@ -98,7 +100,7 @@ export function SavedViewsBar({
         <button
           type="button"
           className="button button--ghost button--full"
-          disabled={disabled || busy || !activeSavedView}
+          disabled={disabled || busy || persistDisabled || !activeSavedView}
           onClick={() => activeSavedView && onDeleteSavedView(activeSavedView.id)}
         >
           Удалить выбранное

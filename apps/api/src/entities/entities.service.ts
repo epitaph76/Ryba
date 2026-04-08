@@ -18,6 +18,7 @@ import { toEntityRecord } from '../db/mappers';
 import { entities, spaces } from '../db/schema';
 import { EntityTypesService } from '../entity-types/entity-types.service';
 import { GroupsService } from '../groups/groups.service';
+import { WorkspaceActivityService } from '../workspaces/workspace-activity.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 
 type SpaceIdParams = z.infer<typeof spaceIdParamsSchema>;
@@ -35,6 +36,8 @@ export class EntitiesService {
     private readonly entityTypesService: EntityTypesService,
     @Inject(GroupsService)
     private readonly groupsService: GroupsService,
+    @Inject(WorkspaceActivityService)
+    private readonly workspaceActivityService: WorkspaceActivityService,
     @Inject(WorkspacesService)
     private readonly workspacesService: WorkspacesService,
   ) {}
@@ -44,7 +47,7 @@ export class EntitiesService {
     params: SpaceIdParams,
     payload: CreateEntityRequest,
   ): Promise<EntityRecord> {
-    const space = await this.requireSpaceAccess(userId, params.spaceId);
+    const space = await this.requireSpaceAccess(userId, params.spaceId, 'edit');
 
     return this.createEntityInScope(
       userId,
@@ -62,7 +65,7 @@ export class EntitiesService {
     params: GroupIdParams,
     payload: CreateEntityRequest,
   ): Promise<EntityRecord> {
-    const group = await this.groupsService.requireGroupAccess(userId, params.groupId);
+    const group = await this.groupsService.requireGroupAccess(userId, params.groupId, 'edit');
 
     return this.createEntityInScope(
       userId,
@@ -79,7 +82,7 @@ export class EntitiesService {
     userId: string,
     params: SpaceIdParams,
   ): Promise<EntityRecord[]> {
-    const space = await this.requireSpaceAccess(userId, params.spaceId);
+    const space = await this.requireSpaceAccess(userId, params.spaceId, 'read');
 
     return this.listEntitiesInScope(userId, {
       workspaceId: space.workspaceId,
@@ -89,7 +92,7 @@ export class EntitiesService {
   }
 
   async listGroupEntities(userId: string, params: GroupIdParams): Promise<EntityRecord[]> {
-    const group = await this.groupsService.requireGroupAccess(userId, params.groupId);
+    const group = await this.groupsService.requireGroupAccess(userId, params.groupId, 'read');
 
     return this.listEntitiesInScope(userId, {
       workspaceId: group.workspaceId,
@@ -99,7 +102,7 @@ export class EntitiesService {
   }
 
   async getEntity(userId: string, params: EntityIdParams): Promise<EntityRecord> {
-    const entity = await this.requireEntityAccess(userId, params.entityId);
+    const entity = await this.requireEntityAccess(userId, params.entityId, 'read');
 
     return toEntityRecord(entity);
   }
@@ -110,7 +113,7 @@ export class EntitiesService {
     payload: UpdateEntityRequest,
   ): Promise<EntityRecord> {
     const db = this.getDb();
-    const entity = await this.requireEntityAccess(userId, params.entityId);
+    const entity = await this.requireEntityAccess(userId, params.entityId, 'edit');
     const nextEntityType = await this.entityTypesService.resolveEntityTypeForWorkspace(
       entity.workspaceId,
       payload.entityTypeId === undefined ? entity.entityTypeId : payload.entityTypeId,
@@ -136,21 +139,53 @@ export class EntitiesService {
       .where(eq(entities.id, entity.id))
       .returning();
 
+    await this.workspaceActivityService.recordEvent({
+      workspaceId: updatedEntity.workspaceId,
+      spaceId: updatedEntity.spaceId,
+      groupId: updatedEntity.groupId,
+      actorUserId: userId,
+      eventType: 'entity.updated',
+      targetType: 'entity',
+      targetId: updatedEntity.id,
+      summary: `Entity updated: ${updatedEntity.title}`,
+      metadata: {
+        entityTypeId: updatedEntity.entityTypeId,
+      },
+    });
+
     return toEntityRecord(updatedEntity);
   }
 
   async deleteEntity(userId: string, params: EntityIdParams): Promise<{ id: string }> {
     const db = this.getDb();
-    const entity = await this.requireEntityAccess(userId, params.entityId);
+    const entity = await this.requireEntityAccess(userId, params.entityId, 'edit');
 
     await db.delete(entities).where(eq(entities.id, entity.id));
+
+    await this.workspaceActivityService.recordEvent({
+      workspaceId: entity.workspaceId,
+      spaceId: entity.spaceId,
+      groupId: entity.groupId,
+      actorUserId: userId,
+      eventType: 'entity.deleted',
+      targetType: 'entity',
+      targetId: entity.id,
+      summary: `Entity deleted: ${entity.title}`,
+      metadata: {
+        entityTypeId: entity.entityTypeId,
+      },
+    });
 
     return {
       id: entity.id,
     };
   }
 
-  async requireEntityAccess(userId: string, entityId: string): Promise<typeof entities.$inferSelect> {
+  async requireEntityAccess(
+    userId: string,
+    entityId: string,
+    permission: 'read' | 'edit' | 'manage' = 'read',
+  ): Promise<typeof entities.$inferSelect> {
     const db = this.getDb();
 
     const entity = await db.query.entities.findFirst({
@@ -161,12 +196,16 @@ export class EntitiesService {
       throw new ApiException(HttpStatus.NOT_FOUND, 'NOT_FOUND', 'Entity not found');
     }
 
-    await this.workspacesService.requireMembership(userId, entity.workspaceId);
+    await this.workspacesService.requirePermission(userId, entity.workspaceId, permission);
 
     return entity;
   }
 
-  private async requireSpaceAccess(userId: string, spaceId: string): Promise<typeof spaces.$inferSelect> {
+  private async requireSpaceAccess(
+    userId: string,
+    spaceId: string,
+    permission: 'read' | 'edit' | 'manage' = 'read',
+  ): Promise<typeof spaces.$inferSelect> {
     const db = this.getDb();
     const space = await db.query.spaces.findFirst({
       where: eq(spaces.id, spaceId),
@@ -176,7 +215,7 @@ export class EntitiesService {
       throw new ApiException(HttpStatus.NOT_FOUND, 'NOT_FOUND', 'Space not found');
     }
 
-    await this.workspacesService.requireMembership(userId, space.workspaceId);
+    await this.workspacesService.requirePermission(userId, space.workspaceId, permission);
 
     return space;
   }
@@ -216,6 +255,20 @@ export class EntitiesService {
       })
       .returning();
 
+    await this.workspaceActivityService.recordEvent({
+      workspaceId: insertedEntity.workspaceId,
+      spaceId: insertedEntity.spaceId,
+      groupId: insertedEntity.groupId,
+      actorUserId: userId,
+      eventType: 'entity.created',
+      targetType: 'entity',
+      targetId: insertedEntity.id,
+      summary: `Entity created: ${insertedEntity.title}`,
+      metadata: {
+        entityTypeId: insertedEntity.entityTypeId,
+      },
+    });
+
     return toEntityRecord(insertedEntity);
   }
 
@@ -228,7 +281,7 @@ export class EntitiesService {
     },
   ): Promise<EntityRecord[]> {
     const db = this.getDb();
-    await this.workspacesService.requireMembership(userId, scope.workspaceId);
+    await this.workspacesService.requirePermission(userId, scope.workspaceId, 'read');
 
     const rows = await db
       .select()

@@ -39,6 +39,7 @@ type TableViewProps = {
   savedViews: SavedViewRecord[];
   loading: boolean;
   disabled: boolean;
+  persistDisabled: boolean;
   busy: boolean;
   selectedEntityId?: string | null;
   onDraftChange: (draft: StructuredViewDraft) => void;
@@ -254,6 +255,7 @@ export function TableView({
   savedViews,
   loading,
   disabled,
+  persistDisabled,
   busy,
   selectedEntityId = null,
   onDraftChange,
@@ -356,6 +358,7 @@ export function TableView({
           savedViews={savedViews}
           activeSavedViewId={activeSavedViewId}
           disabled={disabled}
+          persistDisabled={persistDisabled}
           busy={busy}
           onSelectSavedView={onSelectSavedView}
           onCreateSavedView={onCreateSavedView}
