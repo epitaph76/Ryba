@@ -519,22 +519,15 @@ textarea {
 }
 
 .entity-table tbody {
-  position: relative;
-  display: block;
+  display: table-row-group;
 }
 
-.entity-table thead,
-.entity-table tbody tr {
-  display: table;
-  width: 100%;
-  table-layout: fixed;
+.entity-table thead {
+  display: table-header-group;
 }
 
 .entity-table tbody tr {
-  position: absolute;
-  left: 0;
-  right: 0;
-  min-height: 54px;
+  display: table-row;
   background: rgba(8, 15, 28, 0.56);
 }
 
