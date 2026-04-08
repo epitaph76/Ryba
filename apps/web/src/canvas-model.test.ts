@@ -342,6 +342,47 @@ describe('canvas-model', () => {
     });
   });
 
+  it('uses provided group node positions when available', () => {
+    const graph = buildCanvasGraph({
+      entities: [],
+      entityTypes: [],
+      groups: [
+        {
+          id: 'group-enterprise',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          createdByUserId: 'user-1',
+          name: 'Enterprise Clients',
+          slug: 'enterprise-clients',
+          description: null,
+          createdAt: '2026-04-01T00:00:00.000Z',
+          updatedAt: '2026-04-01T00:00:00.000Z',
+        },
+      ],
+      groupNodePositions: {
+        'group-enterprise': {
+          x: 712,
+          y: 348,
+        },
+      },
+      relations: [],
+      canvas: {
+        spaceId: 'space-1',
+        groupId: null,
+        nodes: [],
+        edges: [],
+        viewport: {
+          zoom: 1,
+          offset: { x: 0, y: 0 },
+        },
+        updatedAt: null,
+      },
+      selectedEntityId: null,
+    });
+
+    expect(graph.nodes[0]?.position).toEqual({ x: 712, y: 348 });
+  });
+
   it('serializes current graph nodes back into canvas payload', () => {
     const serialized = serializeCanvasState({
       spaceId: 'space-1',

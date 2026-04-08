@@ -123,7 +123,7 @@ function EntityCardNode({ data, selected }: NodeProps<CanvasEntityNodeData>) {
 function GroupCardNode({ data, selected }: NodeProps<CanvasGroupNodeData>) {
   return (
     <article
-      className={`canvas-node canvas-node--group nodrag nopan${selected ? ' is-selected' : ''}`}
+      className={`canvas-node canvas-node--group nopan${selected ? ' is-selected' : ''}`}
       onDoubleClick={(event) => {
         event.stopPropagation();
         data.onOpenGroup?.(data.groupId);
@@ -206,6 +206,9 @@ export function App() {
   const [nodes, setNodes] = useState<CanvasNode[]>([]);
   const [edges, setEdges] = useState<CanvasRelationEdge[]>([]);
   const [edgeLayouts, setEdgeLayouts] = useState<CanvasEdgeLayout[]>([]);
+  const [groupNodePositionsBySpaceId, setGroupNodePositionsBySpaceId] = useState<
+    Record<string, Record<string, { x: number; y: number }>>
+  >({});
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('');
   const [selectedSpaceId, setSelectedSpaceId] = useState('');
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
@@ -305,6 +308,7 @@ export function App() {
   const selectedGroup = activeSubspace.group;
   const selectedEntity = entities.find((entity) => entity.id === selectedEntityId) ?? null;
   const entityNodes = useMemo(() => nodes.filter(isCanvasEntityNode), [nodes]);
+  const groupNodePositions = selectedSpaceId ? groupNodePositionsBySpaceId[selectedSpaceId] ?? {} : {};
   const activePendingDeletion =
     pendingEntityDeletion &&
     isRecordInSubspaceContext(pendingEntityDeletion.entity, {
@@ -401,6 +405,7 @@ export function App() {
       entities: nextState.entities,
       entityTypes,
       groups,
+      groupNodePositions,
       onOpenGroup: setSelectedGroupId,
       relations: nextState.relations,
       canvas: nextState.canvasState,
@@ -511,6 +516,7 @@ export function App() {
       entities: nextEntities,
       entityTypes: nextEntityTypes,
       groups,
+      groupNodePositions,
       onOpenGroup: setSelectedGroupId,
       relations: nextRelations,
       canvas: nextCanvas,
@@ -733,6 +739,7 @@ export function App() {
       entities: nextEntities,
       entityTypes,
       groups,
+      groupNodePositions,
       onOpenGroup: setSelectedGroupId,
       relations: nextRelations,
       canvas: nextCanvas,
@@ -1380,8 +1387,15 @@ export function App() {
   };
 
   const onNodesChange = (changes: NodeChange[]) => {
+    const nodeTypeById = new Map(nodes.map((node) => [node.id, node.type]));
+    const entityNodeChanged = changes.some((change) => {
+      const nodeId = 'id' in change ? change.id : null;
+      return !!nodeId && nodeTypeById.get(nodeId) === 'entityCard';
+    });
+
     setNodes((current) => applyNodeChanges<CanvasNodeData>(changes, current));
-    if (changes.length > 0) {
+
+    if (entityNodeChanged) {
       setLayoutDirty(true);
     }
   };
@@ -2814,6 +2828,16 @@ export function App() {
               </span>
             </div>
             <div className="canvas-toolbar__actions">
+              {selectedGroup ? (
+                <button
+                  type="button"
+                  className="button button--ghost canvas-toolbar__back"
+                  disabled={!!busyLabel}
+                  onClick={() => setSelectedGroupId(null)}
+                >
+                  ← Выйти в space
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="button button--ghost"
@@ -2884,8 +2908,24 @@ export function App() {
 
                   openEntityDocumentWithAutosave(node.id);
                 }}
-                onNodeDragStop={() => {
-                  setLayoutDirty(true);
+                onNodeDragStop={(_, node) => {
+                  if (node.type === 'groupCard' && selectedSpaceId) {
+                    setGroupNodePositionsBySpaceId((current) => ({
+                      ...current,
+                      [selectedSpaceId]: {
+                        ...(current[selectedSpaceId] ?? {}),
+                        [node.id]: {
+                          x: node.position.x,
+                          y: node.position.y,
+                        },
+                      },
+                    }));
+                    return;
+                  }
+
+                  if (node.type === 'entityCard') {
+                    setLayoutDirty(true);
+                  }
                 }}
                 defaultEdgeOptions={{ style: { strokeWidth: 2.2, stroke: '#60a5fa' } }}
                 proOptions={{ hideAttribution: true }}

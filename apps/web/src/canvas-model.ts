@@ -67,6 +67,7 @@ export function buildCanvasGraph(input: {
   entities: EntityRecord[];
   entityTypes: EntityTypeRecord[];
   groups?: GroupRecord[];
+  groupNodePositions?: Record<string, { x: number; y: number }>;
   onOpenGroup?: ((groupId: string) => void) | undefined;
   relations: RelationRecord[];
   canvas: CanvasStateRecord;
@@ -123,8 +124,8 @@ export function buildCanvasGraph(input: {
       nodes.push({
         id: group.id,
         type: 'groupCard',
-        position: getGroupNodePosition(index, input.canvas.nodes),
-        draggable: false,
+        position: input.groupNodePositions?.[group.id] ?? getGroupNodePosition(index, input.canvas.nodes),
+        draggable: true,
         connectable: false,
         deletable: false,
         selected: false,
