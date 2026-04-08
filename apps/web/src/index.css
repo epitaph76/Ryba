@@ -1337,6 +1337,13 @@ textarea {
   box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.14), 0 22px 60px rgba(2, 8, 23, 0.38);
 }
 
+.canvas-node--group {
+  cursor: pointer;
+  border: 1px solid rgba(250, 204, 21, 0.26);
+  background:
+    linear-gradient(180deg, rgba(42, 32, 14, 0.98), rgba(24, 18, 8, 0.96));
+}
+
 .canvas-node__header {
   display: flex;
   align-items: center;

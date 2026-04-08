@@ -48,6 +48,10 @@ import { buildDocumentLinkDefinitionIndex } from './document-link-runtime';
 import {
   buildCanvasGraph,
   serializeCanvasState,
+  isCanvasEntityNode,
+  type CanvasGroupNodeData,
+  type CanvasNode,
+  type CanvasNodeData,
   type CanvasEntityNode,
   type CanvasEntityNodeData,
   type CanvasRelationEdge,
@@ -116,8 +120,32 @@ function EntityCardNode({ data, selected }: NodeProps<CanvasEntityNodeData>) {
   );
 }
 
+function GroupCardNode({ data, selected }: NodeProps<CanvasGroupNodeData>) {
+  return (
+    <article
+      className={`canvas-node canvas-node--group nodrag nopan${selected ? ' is-selected' : ''}`}
+      onDoubleClick={(event) => {
+        event.stopPropagation();
+        data.onOpenGroup?.(data.groupId);
+      }}
+    >
+      <div className="canvas-node__header">
+        <span className="canvas-node__badge">subspace</span>
+        <span className="canvas-node__meta">double click</span>
+      </div>
+      <strong>{data.name}</strong>
+      <span className="canvas-node__id">{data.slug}</span>
+      <p>
+        {data.description ??
+          'Локальный контекст внутри пространства. Открой его двойным нажатием по ноде.'}
+      </p>
+    </article>
+  );
+}
+
 const nodeTypes = {
   entityCard: EntityCardNode,
+  groupCard: GroupCardNode,
 };
 
 const defaultViewport = {
@@ -162,7 +190,7 @@ export function App() {
   const flowWrapperRef = useRef<HTMLDivElement | null>(null);
   const pendingEntityDeletionTimerRef = useRef<number | null>(null);
   const [flowInstance, setFlowInstance] = useState<
-    ReactFlowInstance<CanvasEntityNodeData, { relationId: string; relationType: string }> | null
+    ReactFlowInstance<CanvasNodeData, { relationId: string; relationType: string }> | null
   >(null);
 
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_STORAGE_KEY));
@@ -175,7 +203,7 @@ export function App() {
   const [entities, setEntities] = useState<EntityRecord[]>([]);
   const [entityTypes, setEntityTypes] = useState<EntityTypeRecord[]>([]);
   const [relations, setRelations] = useState<RelationRecord[]>([]);
-  const [nodes, setNodes] = useState<CanvasEntityNode[]>([]);
+  const [nodes, setNodes] = useState<CanvasNode[]>([]);
   const [edges, setEdges] = useState<CanvasRelationEdge[]>([]);
   const [edgeLayouts, setEdgeLayouts] = useState<CanvasEdgeLayout[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('');
@@ -276,6 +304,7 @@ export function App() {
   });
   const selectedGroup = activeSubspace.group;
   const selectedEntity = entities.find((entity) => entity.id === selectedEntityId) ?? null;
+  const entityNodes = useMemo(() => nodes.filter(isCanvasEntityNode), [nodes]);
   const activePendingDeletion =
     pendingEntityDeletion &&
     isRecordInSubspaceContext(pendingEntityDeletion.entity, {
@@ -368,11 +397,21 @@ export function App() {
   };
 
   const applyLocalCanvasState = (nextState: CanvasDeletionState) => {
+    const graph = buildCanvasGraph({
+      entities: nextState.entities,
+      entityTypes,
+      groups,
+      onOpenGroup: setSelectedGroupId,
+      relations: nextState.relations,
+      canvas: nextState.canvasState,
+      selectedEntityId: nextState.selectedEntityId,
+    });
+
     setEntities(nextState.entities);
     setRelations(nextState.relations);
     setCanvasState(nextState.canvasState);
-    setNodes(nextState.nodes);
-    setEdges(nextState.edges);
+    setNodes(graph.nodes);
+    setEdges(graph.edges);
     setEdgeLayouts(nextState.edgeLayouts);
     setViewport(nextState.canvasState.viewport);
     setSpaceDocuments(nextState.documents);
@@ -471,6 +510,8 @@ export function App() {
     const graph = buildCanvasGraph({
       entities: nextEntities,
       entityTypes: nextEntityTypes,
+      groups,
+      onOpenGroup: setSelectedGroupId,
       relations: nextRelations,
       canvas: nextCanvas,
       selectedEntityId: focusEntityId,
@@ -691,6 +732,8 @@ export function App() {
     const graph = buildCanvasGraph({
       entities: nextEntities,
       entityTypes,
+      groups,
+      onOpenGroup: setSelectedGroupId,
       relations: nextRelations,
       canvas: nextCanvas,
       selectedEntityId: focusEntityId,
@@ -1047,6 +1090,10 @@ export function App() {
   useEffect(() => {
     setNodes((current) =>
       current.map((node) => {
+        if (!isCanvasEntityNode(node)) {
+          return node;
+        }
+
         const entity = entities.find((item) => item.id === node.id);
         const nextTypeName = entity?.entityTypeId
           ? entityTypes.find((item) => item.id === entity.entityTypeId)?.name ?? 'Типизированная запись'
@@ -1333,7 +1380,7 @@ export function App() {
   };
 
   const onNodesChange = (changes: NodeChange[]) => {
-    setNodes((current) => applyNodeChanges(changes, current));
+    setNodes((current) => applyNodeChanges<CanvasNodeData>(changes, current));
     if (changes.length > 0) {
       setLayoutDirty(true);
     }
@@ -1598,7 +1645,7 @@ export function App() {
       entityTypes,
       entities,
       relations,
-      nodes,
+      nodes: entityNodes,
       edgeLayouts,
       viewport,
       canvasUpdatedAt: canvasState?.updatedAt ?? null,
@@ -1608,9 +1655,9 @@ export function App() {
   }, [
     canvasState,
     edgeLayouts,
+    entityNodes,
     entities,
     entityTypes,
-    nodes,
     relations,
     selectedEntityId,
     selectedSpaceId,
@@ -2822,9 +2869,19 @@ export function App() {
                   setLayoutDirty(true);
                 }}
                 onNodeClick={(_, node) => {
+                  if (node.type === 'groupCard') {
+                    setSelectedEntityId(null);
+                    return;
+                  }
+
                   selectEntityOnCanvas(node.id);
                 }}
                 onNodeDoubleClick={(_, node) => {
+                  if (node.type === 'groupCard') {
+                    setSelectedGroupId(node.id);
+                    return;
+                  }
+
                   openEntityDocumentWithAutosave(node.id);
                 }}
                 onNodeDragStop={() => {

@@ -6,6 +6,7 @@ import type {
   DocumentLinkMode,
   EntityRecord,
   EntityTypeRecord,
+  GroupRecord,
   RelationRecord,
 } from '@ryba/types';
 
@@ -17,8 +18,23 @@ export type CanvasEntityNodeData = {
   relationCount: number;
 };
 
+export type CanvasGroupNodeData = {
+  groupId: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  onOpenGroup?: ((groupId: string) => void) | undefined;
+};
+
+export type CanvasNodeData = CanvasEntityNodeData | CanvasGroupNodeData;
+
 export type CanvasEntityNode = Node<CanvasEntityNodeData>;
+export type CanvasGroupNode = Node<CanvasGroupNodeData>;
+export type CanvasNode = Node<CanvasNodeData>;
 export type CanvasRelationEdge = Edge<{ relationId: string; relationType: string }>;
+
+export const isCanvasEntityNode = (node: CanvasNode): node is CanvasEntityNode =>
+  node.type === 'entityCard';
 
 const getRelationLinkMode = (relation: RelationRecord): DocumentLinkMode | null => {
   const linkMode = relation.properties.linkMode;
@@ -30,13 +46,32 @@ const getRelationLinkMode = (relation: RelationRecord): DocumentLinkMode | null 
   return null;
 };
 
+const getGroupNodePosition = (
+  index: number,
+  layouts: CanvasStateRecord['nodes'],
+) => {
+  const maxX = layouts.reduce(
+    (currentMax, layout) => Math.max(currentMax, layout.position.x + (layout.size?.width ?? 260)),
+    96,
+  );
+  const column = index % 2;
+  const row = Math.floor(index / 2);
+
+  return {
+    x: maxX + 240 + column * 320,
+    y: 96 + row * 196,
+  };
+};
+
 export function buildCanvasGraph(input: {
   entities: EntityRecord[];
   entityTypes: EntityTypeRecord[];
+  groups?: GroupRecord[];
+  onOpenGroup?: ((groupId: string) => void) | undefined;
   relations: RelationRecord[];
   canvas: CanvasStateRecord;
   selectedEntityId: string | null;
-}): { nodes: CanvasEntityNode[]; edges: CanvasRelationEdge[] } {
+}): { nodes: CanvasNode[]; edges: CanvasRelationEdge[] } {
   const relationCountByEntityId = new Map<string, number>();
 
   for (const relation of input.relations) {
@@ -54,7 +89,7 @@ export function buildCanvasGraph(input: {
   const entityTypeById = new Map(input.entityTypes.map((entityType) => [entityType.id, entityType]));
   const relationById = new Map(input.relations.map((relation) => [relation.id, relation]));
 
-  const nodes: CanvasEntityNode[] = [];
+  const nodes: CanvasNode[] = [];
   const edges: CanvasRelationEdge[] = [];
 
   for (const layout of input.canvas.nodes) {
@@ -81,6 +116,27 @@ export function buildCanvasGraph(input: {
         relationCount: relationCountByEntityId.get(entity.id) ?? 0,
       },
     });
+  }
+
+  if (input.canvas.groupId === null) {
+    for (const [index, group] of (input.groups ?? []).entries()) {
+      nodes.push({
+        id: group.id,
+        type: 'groupCard',
+        position: getGroupNodePosition(index, input.canvas.nodes),
+        draggable: false,
+        connectable: false,
+        deletable: false,
+        selected: false,
+        data: {
+          groupId: group.id,
+          name: group.name,
+          slug: group.slug,
+          description: group.description,
+          onOpenGroup: input.onOpenGroup,
+        },
+      });
+    }
   }
 
   for (const layout of input.canvas.edges) {
@@ -118,18 +174,19 @@ export function buildCanvasGraph(input: {
 
 export function serializeCanvasState(input: {
   spaceId: string;
-  nodes: CanvasEntityNode[];
+  nodes: CanvasNode[];
   edgeLayouts: CanvasEdgeLayout[];
   viewport: CanvasStateRecord['viewport'];
 }): { spaceId: string; payload: CanvasStateInput } {
   const edgeLayoutById = new Map(
     input.edgeLayouts.map((layout) => [layout.relationId, layout]),
   );
+  const entityNodes = input.nodes.filter(isCanvasEntityNode);
 
   return {
     spaceId: input.spaceId,
     payload: {
-      nodes: input.nodes.map((node, index) => ({
+      nodes: entityNodes.map((node, index) => ({
         entityId: node.id,
         position: node.position,
         size:

@@ -10,6 +10,7 @@ import type {
 
 import {
   buildCanvasGraph,
+  isCanvasEntityNode,
   type CanvasEntityNode,
   type CanvasRelationEdge,
 } from './canvas-model';
@@ -137,7 +138,7 @@ const buildDeletionState = (
   return {
     entities: input.entities,
     relations: input.relations,
-    nodes: graph.nodes,
+    nodes: graph.nodes.filter(isCanvasEntityNode),
     edges: graph.edges,
     edgeLayouts: input.edgeLayouts,
     canvasState,

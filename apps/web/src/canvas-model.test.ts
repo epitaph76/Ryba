@@ -1,7 +1,7 @@
 import { MarkerType } from 'reactflow';
 import { describe, expect, it } from 'vitest';
 
-import { buildCanvasGraph, serializeCanvasState } from './canvas-model';
+import { buildCanvasGraph, isCanvasEntityNode, serializeCanvasState } from './canvas-model';
 
 describe('canvas-model', () => {
   it('builds react flow graph from entities, relations and canvas state', () => {
@@ -105,7 +105,12 @@ describe('canvas-model', () => {
 
     expect(graph.nodes).toHaveLength(2);
     expect(graph.edges).toHaveLength(1);
-    expect(graph.nodes[0]?.data.entityTypeName).toBe('Company');
+    const firstNode = graph.nodes[0];
+    expect(firstNode?.type).toBe('entityCard');
+    if (!firstNode || !isCanvasEntityNode(firstNode)) {
+      throw new Error('expected entity node');
+    }
+    expect(firstNode.data.entityTypeName).toBe('Company');
     expect(graph.nodes[1]?.selected).toBe(true);
     expect(graph.edges[0]?.data?.relationType).toBe('depends_on');
     expect(graph.edges[0]?.type).toBe('smoothstep');
@@ -296,6 +301,47 @@ describe('canvas-model', () => {
     expect(graph.edges[0]?.markerEnd).toEqual({ type: MarkerType.ArrowClosed });
   });
 
+  it('renders root-space groups as subspace nodes', () => {
+    const graph = buildCanvasGraph({
+      entities: [],
+      entityTypes: [],
+      groups: [
+        {
+          id: 'group-enterprise',
+          workspaceId: 'workspace-1',
+          spaceId: 'space-1',
+          createdByUserId: 'user-1',
+          name: 'Enterprise Clients',
+          slug: 'enterprise-clients',
+          description: 'Deal room for larger accounts',
+          createdAt: '2026-04-01T00:00:00.000Z',
+          updatedAt: '2026-04-01T00:00:00.000Z',
+        },
+      ],
+      relations: [],
+      canvas: {
+        spaceId: 'space-1',
+        groupId: null,
+        nodes: [],
+        edges: [],
+        viewport: {
+          zoom: 1,
+          offset: { x: 0, y: 0 },
+        },
+        updatedAt: null,
+      },
+      selectedEntityId: null,
+    });
+
+    expect(graph.nodes).toHaveLength(1);
+    expect(graph.nodes[0]?.type).toBe('groupCard');
+    expect(graph.nodes[0]?.data).toMatchObject({
+      groupId: 'group-enterprise',
+      name: 'Enterprise Clients',
+      slug: 'enterprise-clients',
+    });
+  });
+
   it('serializes current graph nodes back into canvas payload', () => {
     const serialized = serializeCanvasState({
       spaceId: 'space-1',
@@ -339,5 +385,53 @@ describe('canvas-model', () => {
     });
     expect(serialized.payload.edges).toHaveLength(1);
     expect(serialized.payload.viewport.zoom).toBe(1.2);
+  });
+
+  it('ignores group nodes while serializing canvas payload', () => {
+    const serialized = serializeCanvasState({
+      spaceId: 'space-1',
+      nodes: [
+        {
+          id: 'group-enterprise',
+          type: 'groupCard',
+          position: { x: 480, y: 120 },
+          data: {
+            groupId: 'group-enterprise',
+            name: 'Enterprise Clients',
+            slug: 'enterprise-clients',
+            description: null,
+          },
+        },
+        {
+          id: 'entity-a',
+          type: 'entityCard',
+          position: { x: 120, y: 160 },
+          width: 260,
+          height: 118,
+          data: {
+            entityId: 'entity-a',
+            title: 'Alpha',
+            summary: null,
+            entityTypeName: 'Company',
+            relationCount: 1,
+          },
+        },
+      ],
+      edgeLayouts: [],
+      viewport: {
+        zoom: 1,
+        offset: { x: 0, y: 0 },
+      },
+    });
+
+    expect(serialized.payload.nodes).toEqual([
+      {
+        entityId: 'entity-a',
+        position: { x: 120, y: 160 },
+        size: { width: 260, height: 118 },
+        zIndex: 1,
+        collapsed: false,
+      },
+    ]);
   });
 });
