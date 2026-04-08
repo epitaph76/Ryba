@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
 import {
   createSavedViewRequestSchema,
+  groupIdParamsSchema,
   savedViewIdParamsSchema,
   spaceIdParamsSchema,
   updateSavedViewRequestSchema,
@@ -15,9 +16,11 @@ import { ApiException } from '../common/api-exception';
 import { DatabaseService } from '../database.service';
 import { toSavedViewRecord } from '../db/mappers';
 import { entityTypes, savedViews, spaces } from '../db/schema';
+import { GroupsService } from '../groups/groups.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 
 type SpaceIdParams = z.infer<typeof spaceIdParamsSchema>;
+type GroupIdParams = z.infer<typeof groupIdParamsSchema>;
 type SavedViewIdParams = z.infer<typeof savedViewIdParamsSchema>;
 type CreateSavedViewRequest = z.infer<typeof createSavedViewRequestSchema>;
 type UpdateSavedViewRequest = z.infer<typeof updateSavedViewRequestSchema>;
@@ -27,21 +30,30 @@ export class ViewsService {
   constructor(
     @Inject(DatabaseService)
     private readonly databaseService: DatabaseService,
+    @Inject(GroupsService)
+    private readonly groupsService: GroupsService,
     @Inject(WorkspacesService)
     private readonly workspacesService: WorkspacesService,
   ) {}
 
   async listSavedViews(userId: string, params: SpaceIdParams): Promise<SavedViewRecord[]> {
-    const db = this.getDb();
     const space = await this.requireSpaceAccess(userId, params.spaceId);
 
-    const rows = await db
-      .select()
-      .from(savedViews)
-      .where(and(eq(savedViews.workspaceId, space.workspaceId), eq(savedViews.spaceId, space.id)))
-      .orderBy(asc(savedViews.createdAt));
+    return this.listSavedViewsInScope(userId, {
+      workspaceId: space.workspaceId,
+      spaceId: space.id,
+      groupId: null,
+    });
+  }
 
-    return rows.map(toSavedViewRecord);
+  async listGroupSavedViews(userId: string, params: GroupIdParams): Promise<SavedViewRecord[]> {
+    const group = await this.groupsService.requireGroupAccess(userId, params.groupId);
+
+    return this.listSavedViewsInScope(userId, {
+      workspaceId: group.workspaceId,
+      spaceId: group.spaceId,
+      groupId: group.id,
+    });
   }
 
   async createSavedView(
@@ -49,28 +61,35 @@ export class ViewsService {
     params: SpaceIdParams,
     payload: CreateSavedViewRequest,
   ): Promise<SavedViewRecord> {
-    const db = this.getDb();
     const space = await this.requireSpaceAccess(userId, params.spaceId);
 
-    await this.ensureEntityTypeBelongsToWorkspace(space.workspaceId, payload.entityTypeId ?? null);
-
-    const [inserted] = await db
-      .insert(savedViews)
-      .values({
-        id: randomUUID(),
+    return this.createSavedViewInScope(
+      userId,
+      {
         workspaceId: space.workspaceId,
         spaceId: space.id,
-        name: payload.name.trim(),
-        description: payload.description ?? null,
-        entityTypeId: payload.entityTypeId ?? null,
-        viewType: payload.viewType,
-        config: payload.config,
-        createdByUserId: userId,
-        updatedByUserId: userId,
-      })
-      .returning();
+        groupId: null,
+      },
+      payload,
+    );
+  }
 
-    return toSavedViewRecord(inserted);
+  async createGroupSavedView(
+    userId: string,
+    params: GroupIdParams,
+    payload: CreateSavedViewRequest,
+  ): Promise<SavedViewRecord> {
+    const group = await this.groupsService.requireGroupAccess(userId, params.groupId);
+
+    return this.createSavedViewInScope(
+      userId,
+      {
+        workspaceId: group.workspaceId,
+        spaceId: group.spaceId,
+        groupId: group.id,
+      },
+      payload,
+    );
   }
 
   async updateSavedView(
@@ -126,6 +145,64 @@ export class ViewsService {
     await this.workspacesService.requireMembership(userId, space.workspaceId);
 
     return space;
+  }
+
+  private async listSavedViewsInScope(
+    userId: string,
+    scope: {
+      workspaceId: string;
+      spaceId: string;
+      groupId: string | null;
+    },
+  ): Promise<SavedViewRecord[]> {
+    const db = this.getDb();
+    await this.workspacesService.requireMembership(userId, scope.workspaceId);
+
+    const rows = await db
+      .select()
+      .from(savedViews)
+      .where(
+        and(
+          eq(savedViews.workspaceId, scope.workspaceId),
+          eq(savedViews.spaceId, scope.spaceId),
+          scope.groupId ? eq(savedViews.groupId, scope.groupId) : isNull(savedViews.groupId),
+        ),
+      )
+      .orderBy(asc(savedViews.createdAt));
+
+    return rows.map(toSavedViewRecord);
+  }
+
+  private async createSavedViewInScope(
+    userId: string,
+    scope: {
+      workspaceId: string;
+      spaceId: string;
+      groupId: string | null;
+    },
+    payload: CreateSavedViewRequest,
+  ): Promise<SavedViewRecord> {
+    const db = this.getDb();
+    await this.ensureEntityTypeBelongsToWorkspace(scope.workspaceId, payload.entityTypeId ?? null);
+
+    const [inserted] = await db
+      .insert(savedViews)
+      .values({
+        id: randomUUID(),
+        workspaceId: scope.workspaceId,
+        spaceId: scope.spaceId,
+        groupId: scope.groupId,
+        name: payload.name.trim(),
+        description: payload.description ?? null,
+        entityTypeId: payload.entityTypeId ?? null,
+        viewType: payload.viewType,
+        config: payload.config,
+        createdByUserId: userId,
+        updatedByUserId: userId,
+      })
+      .returning();
+
+    return toSavedViewRecord(inserted);
   }
 
   private async requireSavedViewAccess(

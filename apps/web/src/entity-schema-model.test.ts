@@ -95,6 +95,7 @@ describe('entity-schema-model', () => {
         id: 'entity-1',
         workspaceId: 'workspace-1',
         spaceId: 'space-1',
+        groupId: null,
         entityTypeId: 'task-type',
         title: 'Ship S4',
         summary: 'Typed entity',

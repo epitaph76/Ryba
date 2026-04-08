@@ -1,6 +1,6 @@
 import type { EntityTypeId } from './entity';
 import type { UserId } from './user';
-import type { SpaceId, WorkspaceId } from './workspace';
+import type { GroupId, SpaceId, WorkspaceId } from './workspace';
 
 export type SavedViewId = string;
 export type SavedViewMode = 'table' | 'list';
@@ -50,6 +50,7 @@ export interface SavedViewRecord {
   id: SavedViewId;
   workspaceId: WorkspaceId;
   spaceId: SpaceId;
+  groupId: GroupId | null;
   name: string;
   description: string | null;
   entityTypeId: EntityTypeId | null;

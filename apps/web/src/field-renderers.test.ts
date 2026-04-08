@@ -63,6 +63,7 @@ describe('field-renderers', () => {
           id: 'entity-company',
           workspaceId: 'workspace-1',
           spaceId: 'space-1',
+          groupId: null,
           entityTypeId: 'type-company',
           title: 'Acme Inc.',
           summary: null,

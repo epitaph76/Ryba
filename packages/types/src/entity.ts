@@ -1,6 +1,6 @@
 import type { JsonObject } from './json';
 import type { UserId } from './user';
-import type { SpaceId, WorkspaceId } from './workspace';
+import type { GroupId, SpaceId, WorkspaceId } from './workspace';
 
 export type EntityId = string;
 export type EntityTypeId = string;
@@ -44,6 +44,7 @@ export interface EntityRecord {
   id: EntityId;
   workspaceId: WorkspaceId;
   spaceId: SpaceId;
+  groupId: GroupId | null;
   entityTypeId: EntityTypeId | null;
   title: string;
   summary: string | null;

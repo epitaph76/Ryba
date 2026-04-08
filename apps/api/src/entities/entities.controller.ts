@@ -14,6 +14,7 @@ import type { z } from 'zod';
 import {
   createEntityRequestSchema,
   entityIdParamsSchema,
+  groupIdParamsSchema,
   listEntitiesResponseSchema,
   spaceIdParamsSchema,
   updateEntityRequestSchema,
@@ -28,6 +29,7 @@ import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { EntitiesService } from './entities.service';
 
 type SpaceIdParams = z.infer<typeof spaceIdParamsSchema>;
+type GroupIdParams = z.infer<typeof groupIdParamsSchema>;
 type EntityIdParams = z.infer<typeof entityIdParamsSchema>;
 type CreateEntityRequest = z.infer<typeof createEntityRequestSchema>;
 type UpdateEntityRequest = z.infer<typeof updateEntityRequestSchema>;
@@ -55,6 +57,19 @@ export class EntitiesController {
     return envelope(entity);
   }
 
+  @Post('groups/:groupId/entities')
+  async createGroupEntity(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param(new ZodValidationPipe(groupIdParamsSchema))
+    params: GroupIdParams,
+    @Body(new ZodValidationPipe(createEntityRequestSchema))
+    payload: CreateEntityRequest,
+  ): Promise<ApiEnvelope<EntityRecord>> {
+    const entity = await this.entitiesService.createGroupEntity(user.userId, params, payload);
+
+    return envelope(entity);
+  }
+
   @Get('spaces/:spaceId/entities')
   async listEntities(
     @CurrentUser() user: AuthenticatedUser,
@@ -62,6 +77,19 @@ export class EntitiesController {
     params: SpaceIdParams,
   ): Promise<ApiEnvelope<ListEntitiesResponse>> {
     const items = await this.entitiesService.listEntities(user.userId, params);
+
+    return envelope({
+      items,
+    });
+  }
+
+  @Get('groups/:groupId/entities')
+  async listGroupEntities(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param(new ZodValidationPipe(groupIdParamsSchema))
+    params: GroupIdParams,
+  ): Promise<ApiEnvelope<ListEntitiesResponse>> {
+    const items = await this.entitiesService.listGroupEntities(user.userId, params);
 
     return envelope({
       items,

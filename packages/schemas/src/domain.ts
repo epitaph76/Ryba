@@ -88,6 +88,18 @@ export const spaceRecordSchema = z.object({
   updatedAt: z.string().min(1),
 });
 
+export const groupRecordSchema = z.object({
+  id: idSchema,
+  workspaceId: idSchema,
+  spaceId: idSchema,
+  createdByUserId: idSchema,
+  name: z.string().trim().min(1).max(120),
+  slug: slugSchema,
+  description: z.string().max(4000).nullable(),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+});
+
 export const entityFieldTypeSchema = z.enum([
   'text',
   'rich_text',
@@ -141,6 +153,7 @@ export const entityRecordSchema = z.object({
   id: idSchema,
   workspaceId: idSchema,
   spaceId: idSchema,
+  groupId: idSchema.nullable(),
   entityTypeId: idSchema.nullable(),
   title: z.string().trim().min(1).max(200),
   summary: z.string().max(4000).nullable(),
@@ -155,6 +168,7 @@ export const relationRecordSchema = z.object({
   id: idSchema,
   workspaceId: idSchema,
   spaceId: idSchema,
+  groupId: idSchema.nullable(),
   fromEntityId: idSchema,
   toEntityId: idSchema,
   relationType: z.string().trim().min(1).max(80),
@@ -191,6 +205,12 @@ export const createWorkspaceRequestSchema = z.object({
 export const createSpaceRequestSchema = z.object({
   name: z.string().trim().min(1).max(120),
   slug: slugSchema,
+});
+
+export const createGroupRequestSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  slug: slugSchema,
+  description: z.string().max(4000).nullable().optional(),
 });
 
 export const createEntityRequestSchema = z.object({
@@ -242,6 +262,10 @@ export const spaceIdParamsSchema = z.object({
   spaceId: idSchema,
 });
 
+export const groupIdParamsSchema = z.object({
+  groupId: idSchema,
+});
+
 export const entityIdParamsSchema = z.object({
   entityId: idSchema,
 });
@@ -260,6 +284,10 @@ export const listWorkspacesResponseSchema = z.object({
 
 export const listSpacesResponseSchema = z.object({
   items: z.array(spaceRecordSchema),
+});
+
+export const listGroupsResponseSchema = z.object({
+  items: z.array(groupRecordSchema),
 });
 
 export const listEntitiesResponseSchema = z.object({
@@ -331,6 +359,7 @@ export const savedViewRecordSchema = z.object({
   id: idSchema,
   workspaceId: idSchema,
   spaceId: idSchema,
+  groupId: idSchema.nullable(),
   name: z.string().trim().min(1).max(120),
   description: z.string().max(4000).nullable(),
   entityTypeId: idSchema.nullable(),
@@ -464,6 +493,7 @@ export const canvasLayoutSchema = z.object({
 
 export const canvasStateRecordSchema = z.object({
   spaceId: idSchema,
+  groupId: idSchema.nullable(),
   nodes: z.array(canvasNodeLayoutSchema),
   edges: z.array(canvasEdgeLayoutSchema),
   viewport: canvasViewportSchema,
@@ -501,6 +531,7 @@ export const documentRecordSchema = z.object({
   id: idSchema,
   workspaceId: idSchema,
   spaceId: idSchema,
+  groupId: idSchema.nullable(),
   entityId: idSchema,
   title: z.string().trim().min(1).max(200),
   body: z.array(documentBlockSchema),

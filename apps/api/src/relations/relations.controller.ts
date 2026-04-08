@@ -13,6 +13,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { z } from 'zod';
 import {
   createRelationRequestSchema,
+  groupIdParamsSchema,
   listRelationsResponseSchema,
   relationIdParamsSchema,
   spaceIdParamsSchema,
@@ -28,6 +29,7 @@ import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { RelationsService } from './relations.service';
 
 type SpaceIdParams = z.infer<typeof spaceIdParamsSchema>;
+type GroupIdParams = z.infer<typeof groupIdParamsSchema>;
 type RelationIdParams = z.infer<typeof relationIdParamsSchema>;
 type CreateRelationRequest = z.infer<typeof createRelationRequestSchema>;
 type UpdateRelationRequest = z.infer<typeof updateRelationRequestSchema>;
@@ -55,6 +57,19 @@ export class RelationsController {
     return envelope(relation);
   }
 
+  @Post('groups/:groupId/relations')
+  async createGroupRelation(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param(new ZodValidationPipe(groupIdParamsSchema))
+    params: GroupIdParams,
+    @Body(new ZodValidationPipe(createRelationRequestSchema))
+    payload: CreateRelationRequest,
+  ): Promise<ApiEnvelope<RelationRecord>> {
+    const relation = await this.relationsService.createGroupRelation(user.userId, params, payload);
+
+    return envelope(relation);
+  }
+
   @Get('spaces/:spaceId/relations')
   async listRelations(
     @CurrentUser() user: AuthenticatedUser,
@@ -62,6 +77,19 @@ export class RelationsController {
     params: SpaceIdParams,
   ): Promise<ApiEnvelope<ListRelationsResponse>> {
     const items = await this.relationsService.listRelations(user.userId, params);
+
+    return envelope({
+      items,
+    });
+  }
+
+  @Get('groups/:groupId/relations')
+  async listGroupRelations(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param(new ZodValidationPipe(groupIdParamsSchema))
+    params: GroupIdParams,
+  ): Promise<ApiEnvelope<ListRelationsResponse>> {
+    const items = await this.relationsService.listGroupRelations(user.userId, params);
 
     return envelope({
       items,

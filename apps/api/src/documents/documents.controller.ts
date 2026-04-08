@@ -6,6 +6,7 @@ import {
   documentDetailRecordSchema,
   documentIdParamsSchema,
   entityIdParamsSchema,
+  groupIdParamsSchema,
   listDocumentBacklinksResponseSchema,
   listDocumentsResponseSchema,
   spaceIdParamsSchema,
@@ -27,6 +28,7 @@ import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { DocumentsService } from './documents.service';
 
 type SpaceIdParams = z.infer<typeof spaceIdParamsSchema>;
+type GroupIdParams = z.infer<typeof groupIdParamsSchema>;
 type DocumentIdParams = z.infer<typeof documentIdParamsSchema>;
 type EntityIdParams = z.infer<typeof entityIdParamsSchema>;
 type CreateDocumentRequest = z.infer<typeof createDocumentRequestSchema>;
@@ -58,6 +60,19 @@ export class DocumentsController {
     });
   }
 
+  @Get('groups/:groupId/documents')
+  async listGroupDocuments(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param(new ZodValidationPipe(groupIdParamsSchema))
+    params: GroupIdParams,
+  ): Promise<ApiEnvelope<ListDocumentsResponse>> {
+    const items = await this.documentsService.listGroupDocuments(user.userId, params);
+
+    return envelope({
+      items,
+    });
+  }
+
   @Post('spaces/:spaceId/documents')
   async createDocument(
     @CurrentUser() user: AuthenticatedUser,
@@ -67,6 +82,20 @@ export class DocumentsController {
     payload: CreateDocumentRequest,
   ): Promise<ApiEnvelope<DocumentDetailRecord>> {
     const detail = await this.documentsService.createDocument(user.userId, params, payload);
+    documentDetailRecordSchema.parse(detail);
+
+    return envelope(detail);
+  }
+
+  @Post('groups/:groupId/documents')
+  async createGroupDocument(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param(new ZodValidationPipe(groupIdParamsSchema))
+    params: GroupIdParams,
+    @Body(new ZodValidationPipe(createDocumentRequestSchema))
+    payload: CreateDocumentRequest,
+  ): Promise<ApiEnvelope<DocumentDetailRecord>> {
+    const detail = await this.documentsService.createGroupDocument(user.userId, params, payload);
     documentDetailRecordSchema.parse(detail);
 
     return envelope(detail);

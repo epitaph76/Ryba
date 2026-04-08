@@ -1,5 +1,5 @@
 import type { EntityId, EntityTypeId } from './entity';
-import type { SpaceId, WorkspaceId } from './workspace';
+import type { GroupId, SpaceId, WorkspaceId } from './workspace';
 import type { UserId } from './user';
 import type { DocumentLinkMode } from './document-link';
 
@@ -28,6 +28,7 @@ export interface DocumentRecord {
   id: DocumentId;
   workspaceId: WorkspaceId;
   spaceId: SpaceId;
+  groupId: GroupId | null;
   entityId: EntityId;
   title: string;
   body: DocumentBlock[];

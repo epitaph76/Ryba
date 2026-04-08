@@ -1,6 +1,6 @@
 import type { EntityId } from './entity';
 import type { RelationId } from './relation';
-import type { SpaceId } from './workspace';
+import type { GroupId, SpaceId } from './workspace';
 
 export interface CanvasPoint {
   x: number;
@@ -42,5 +42,6 @@ export interface CanvasStateInput extends CanvasLayout {}
 
 export interface CanvasStateRecord extends CanvasLayout {
   spaceId: SpaceId;
+  groupId: GroupId | null;
   updatedAt: string | null;
 }

@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
 import {
   createRelationRequestSchema,
+  groupIdParamsSchema,
   relationIdParamsSchema,
   spaceIdParamsSchema,
   updateRelationRequestSchema,
@@ -15,9 +16,11 @@ import { ApiException } from '../common/api-exception';
 import { DatabaseService } from '../database.service';
 import { toRelationRecord } from '../db/mappers';
 import { entities, relations, spaces } from '../db/schema';
+import { GroupsService } from '../groups/groups.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 
 type SpaceIdParams = z.infer<typeof spaceIdParamsSchema>;
+type GroupIdParams = z.infer<typeof groupIdParamsSchema>;
 type RelationIdParams = z.infer<typeof relationIdParamsSchema>;
 type CreateRelationRequest = z.infer<typeof createRelationRequestSchema>;
 type UpdateRelationRequest = z.infer<typeof updateRelationRequestSchema>;
@@ -27,6 +30,8 @@ export class RelationsService {
   constructor(
     @Inject(DatabaseService)
     private readonly databaseService: DatabaseService,
+    @Inject(GroupsService)
+    private readonly groupsService: GroupsService,
     @Inject(WorkspacesService)
     private readonly workspacesService: WorkspacesService,
   ) {}
@@ -36,81 +41,58 @@ export class RelationsService {
     params: SpaceIdParams,
     payload: CreateRelationRequest,
   ): Promise<RelationRecord> {
-    const db = this.getDb();
-
-    if (payload.fromEntityId === payload.toEntityId) {
-      throw new ApiException(
-        HttpStatus.BAD_REQUEST,
-        'VALIDATION_ERROR',
-        'Relation endpoints must be different entities',
-      );
-    }
-
     const space = await this.requireSpaceAccess(userId, params.spaceId);
 
-    const [fromEntity, toEntity] = await Promise.all([
-      db.query.entities.findFirst({
-        where: eq(entities.id, payload.fromEntityId),
-      }),
-      db.query.entities.findFirst({
-        where: eq(entities.id, payload.toEntityId),
-      }),
-    ]);
-
-    if (!fromEntity || !toEntity) {
-      throw new ApiException(
-        HttpStatus.BAD_REQUEST,
-        'VALIDATION_ERROR',
-        'Relation entities must exist',
-      );
-    }
-
-    const endpointsBelongToSpace =
-      fromEntity.workspaceId === space.workspaceId &&
-      toEntity.workspaceId === space.workspaceId &&
-      fromEntity.spaceId === space.id &&
-      toEntity.spaceId === space.id;
-
-    if (!endpointsBelongToSpace) {
-      throw new ApiException(
-        HttpStatus.BAD_REQUEST,
-        'VALIDATION_ERROR',
-        'Both entities must belong to the same workspace and space',
-      );
-    }
-
-    const [insertedRelation] = await db
-      .insert(relations)
-      .values({
-        id: randomUUID(),
+    return this.createRelationInScope(
+      userId,
+      {
         workspaceId: space.workspaceId,
         spaceId: space.id,
-        fromEntityId: payload.fromEntityId,
-        toEntityId: payload.toEntityId,
-        relationType: payload.relationType.trim(),
-        properties: payload.properties ?? {},
-        createdByUserId: userId,
-        updatedByUserId: userId,
-      })
-      .returning();
+        groupId: null,
+      },
+      payload,
+    );
+  }
 
-    return toRelationRecord(insertedRelation);
+  async createGroupRelation(
+    userId: string,
+    params: GroupIdParams,
+    payload: CreateRelationRequest,
+  ): Promise<RelationRecord> {
+    const group = await this.groupsService.requireGroupAccess(userId, params.groupId);
+
+    return this.createRelationInScope(
+      userId,
+      {
+        workspaceId: group.workspaceId,
+        spaceId: group.spaceId,
+        groupId: group.id,
+      },
+      payload,
+    );
   }
 
   async listRelations(
     userId: string,
     params: SpaceIdParams,
   ): Promise<RelationRecord[]> {
-    const db = this.getDb();
     const space = await this.requireSpaceAccess(userId, params.spaceId);
 
-    const rows = await db
-      .select()
-      .from(relations)
-      .where(and(eq(relations.workspaceId, space.workspaceId), eq(relations.spaceId, space.id)))
-      .orderBy(asc(relations.createdAt));
+    return this.listRelationsInScope(userId, {
+      workspaceId: space.workspaceId,
+      spaceId: space.id,
+      groupId: null,
+    });
+  }
 
-    return rows.map(toRelationRecord);
+  async listGroupRelations(userId: string, params: GroupIdParams): Promise<RelationRecord[]> {
+    const group = await this.groupsService.requireGroupAccess(userId, params.groupId);
+
+    return this.listRelationsInScope(userId, {
+      workspaceId: group.workspaceId,
+      spaceId: group.spaceId,
+      groupId: group.id,
+    });
   }
 
   async updateRelation(
@@ -164,6 +146,103 @@ export class RelationsService {
     await this.workspacesService.requireMembership(userId, space.workspaceId);
 
     return space;
+  }
+
+  private async createRelationInScope(
+    userId: string,
+    scope: {
+      workspaceId: string;
+      spaceId: string;
+      groupId: string | null;
+    },
+    payload: CreateRelationRequest,
+  ): Promise<RelationRecord> {
+    const db = this.getDb();
+
+    if (payload.fromEntityId === payload.toEntityId) {
+      throw new ApiException(
+        HttpStatus.BAD_REQUEST,
+        'VALIDATION_ERROR',
+        'Relation endpoints must be different entities',
+      );
+    }
+
+    const [fromEntity, toEntity] = await Promise.all([
+      db.query.entities.findFirst({
+        where: eq(entities.id, payload.fromEntityId),
+      }),
+      db.query.entities.findFirst({
+        where: eq(entities.id, payload.toEntityId),
+      }),
+    ]);
+
+    if (!fromEntity || !toEntity) {
+      throw new ApiException(
+        HttpStatus.BAD_REQUEST,
+        'VALIDATION_ERROR',
+        'Relation entities must exist',
+      );
+    }
+
+    const endpointsBelongToScope =
+      fromEntity.workspaceId === scope.workspaceId &&
+      toEntity.workspaceId === scope.workspaceId &&
+      fromEntity.spaceId === scope.spaceId &&
+      toEntity.spaceId === scope.spaceId &&
+      fromEntity.groupId === scope.groupId &&
+      toEntity.groupId === scope.groupId;
+
+    if (!endpointsBelongToScope) {
+      throw new ApiException(
+        HttpStatus.BAD_REQUEST,
+        'VALIDATION_ERROR',
+        'Both entities must belong to the same workspace, space and group context',
+      );
+    }
+
+    const [insertedRelation] = await db
+      .insert(relations)
+      .values({
+        id: randomUUID(),
+        workspaceId: scope.workspaceId,
+        spaceId: scope.spaceId,
+        groupId: scope.groupId,
+        fromEntityId: payload.fromEntityId,
+        toEntityId: payload.toEntityId,
+        relationType: payload.relationType.trim(),
+        properties: payload.properties ?? {},
+        createdByUserId: userId,
+        updatedByUserId: userId,
+      })
+      .returning();
+
+    return toRelationRecord(insertedRelation);
+  }
+
+  private async listRelationsInScope(
+    userId: string,
+    scope: {
+      workspaceId: string;
+      spaceId: string;
+      groupId: string | null;
+    },
+  ): Promise<RelationRecord[]> {
+    const db = this.getDb();
+    await this.workspacesService.requireMembership(userId, scope.workspaceId);
+
+    const rows = await db
+      .select()
+      .from(relations)
+      .where(
+        and(
+          eq(relations.workspaceId, scope.workspaceId),
+          eq(relations.spaceId, scope.spaceId),
+          scope.groupId ? eq(relations.groupId, scope.groupId) : isNull(relations.groupId),
+        ),
+      )
+      .orderBy(asc(relations.createdAt));
+
+    return rows.map(toRelationRecord);
   }
 
   private async requireRelationAccess(

@@ -8,6 +8,7 @@ import type {
   DocumentRecord,
   EntityRecord,
   EntityTypeRecord,
+  GroupRecord,
   RelationRecord,
   SavedViewRecord,
   SpaceRecord,
@@ -126,6 +127,37 @@ export const canvasApi = {
     );
   },
 
+  listGroups(token: string, spaceId: string) {
+    return request<ListResponse<GroupRecord>>(
+      `/spaces/${spaceId}/groups`,
+      { method: 'GET' },
+      token,
+    );
+  },
+
+  createGroup(
+    token: string,
+    spaceId: string,
+    input: {
+      name: string;
+      slug: string;
+      description?: string | null;
+    },
+  ) {
+    return request<GroupRecord>(
+      `/spaces/${spaceId}/groups`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          name: input.name,
+          slug: input.slug,
+          description: input.description ?? null,
+        }),
+      },
+      token,
+    );
+  },
+
   listEntities(token: string, spaceId: string) {
     return request<ListResponse<EntityRecord>>(
       `/spaces/${spaceId}/entities`,
@@ -146,6 +178,39 @@ export const canvasApi = {
   ) {
     return request<EntityRecord>(
       `/spaces/${spaceId}/entities`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          entityTypeId: input.entityTypeId ?? undefined,
+          title: input.title,
+          summary: input.summary ?? null,
+          properties: input.properties ?? {},
+        }),
+      },
+      token,
+    );
+  },
+
+  listGroupEntities(token: string, groupId: string) {
+    return request<ListResponse<EntityRecord>>(
+      `/groups/${groupId}/entities`,
+      { method: 'GET' },
+      token,
+    );
+  },
+
+  createGroupEntity(
+    token: string,
+    groupId: string,
+    input: {
+      entityTypeId?: string | null;
+      title: string;
+      summary?: string | null;
+      properties?: Record<string, unknown>;
+    },
+  ) {
+    return request<EntityRecord>(
+      `/groups/${groupId}/entities`,
       {
         method: 'POST',
         body: JSON.stringify({
@@ -190,13 +255,56 @@ export const canvasApi = {
     );
   },
 
+  listGroupRelations(token: string, groupId: string) {
+    return request<ListResponse<RelationRecord>>(
+      `/groups/${groupId}/relations`,
+      { method: 'GET' },
+      token,
+    );
+  },
+
+  createGroupRelation(
+    token: string,
+    groupId: string,
+    input: {
+      fromEntityId: string;
+      toEntityId: string;
+      relationType: string;
+      properties?: Record<string, unknown>;
+    },
+  ) {
+    return request<RelationRecord>(
+      `/groups/${groupId}/relations`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          ...input,
+          properties: input.properties ?? {},
+        }),
+      },
+      token,
+    );
+  },
+
   getCanvas(token: string, spaceId: string) {
     return request<CanvasStateRecord>(`/spaces/${spaceId}/canvas`, { method: 'GET' }, token);
+  },
+
+  getGroupCanvas(token: string, groupId: string) {
+    return request<CanvasStateRecord>(`/groups/${groupId}/canvas`, { method: 'GET' }, token);
   },
 
   listSavedViews(token: string, spaceId: string) {
     return request<ListResponse<SavedViewRecord>>(
       `/spaces/${spaceId}/saved-views`,
+      { method: 'GET' },
+      token,
+    );
+  },
+
+  listGroupSavedViews(token: string, groupId: string) {
+    return request<ListResponse<SavedViewRecord>>(
+      `/groups/${groupId}/saved-views`,
       { method: 'GET' },
       token,
     );
@@ -215,6 +323,33 @@ export const canvasApi = {
   ) {
     return request<SavedViewRecord>(
       `/spaces/${spaceId}/saved-views`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          name: input.name,
+          description: input.description ?? null,
+          entityTypeId: input.entityTypeId ?? null,
+          viewType: input.viewType,
+          config: input.config,
+        }),
+      },
+      token,
+    );
+  },
+
+  createGroupSavedView(
+    token: string,
+    groupId: string,
+    input: {
+      name: string;
+      description?: string | null;
+      entityTypeId?: string | null;
+      viewType: SavedViewRecord['viewType'];
+      config: SavedViewRecord['config'];
+    },
+  ) {
+    return request<SavedViewRecord>(
+      `/groups/${groupId}/saved-views`,
       {
         method: 'POST',
         body: JSON.stringify({
@@ -364,6 +499,14 @@ export const canvasApi = {
     );
   },
 
+  listGroupDocuments(token: string, groupId: string) {
+    return request<ListResponse<DocumentRecord>>(
+      `/groups/${groupId}/documents`,
+      { method: 'GET' },
+      token,
+    );
+  },
+
   createDocument(
     token: string,
     spaceId: string,
@@ -374,6 +517,24 @@ export const canvasApi = {
   ) {
     return request<DocumentDetailRecord>(
       `/spaces/${spaceId}/documents`,
+      {
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+      token,
+    );
+  },
+
+  createGroupDocument(
+    token: string,
+    groupId: string,
+    input: {
+      title: string;
+      body: DocumentRecord['body'];
+    },
+  ) {
+    return request<DocumentDetailRecord>(
+      `/groups/${groupId}/documents`,
       {
         method: 'POST',
         body: JSON.stringify(input),
@@ -437,6 +598,17 @@ export const canvasApi = {
   saveCanvas(token: string, spaceId: string, input: CanvasStateInput) {
     return request<CanvasStateRecord>(
       `/spaces/${spaceId}/canvas`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(input),
+      },
+      token,
+    );
+  },
+
+  saveGroupCanvas(token: string, groupId: string, input: CanvasStateInput) {
+    return request<CanvasStateRecord>(
+      `/groups/${groupId}/canvas`,
       {
         method: 'PUT',
         body: JSON.stringify(input),

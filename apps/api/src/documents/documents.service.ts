@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
 import {
   createDocumentRequestSchema,
   documentEntityReferenceSchema,
   documentIdParamsSchema,
   entityIdParamsSchema,
+  groupIdParamsSchema,
   spaceIdParamsSchema,
   updateDocumentRequestSchema,
   upsertEntityDocumentRequestSchema,
@@ -43,9 +44,11 @@ import {
 } from '../db/mappers';
 import { documentEntityMentions, documents, entities, relations, spaces } from '../db/schema';
 import { EntityTypesService } from '../entity-types/entity-types.service';
+import { GroupsService } from '../groups/groups.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 
 type SpaceIdParams = z.infer<typeof spaceIdParamsSchema>;
+type GroupIdParams = z.infer<typeof groupIdParamsSchema>;
 type DocumentIdParams = z.infer<typeof documentIdParamsSchema>;
 type EntityIdParams = z.infer<typeof entityIdParamsSchema>;
 type CreateDocumentRequest = z.infer<typeof createDocumentRequestSchema>;
@@ -73,21 +76,30 @@ export class DocumentsService {
     private readonly databaseService: DatabaseService,
     @Inject(EntityTypesService)
     private readonly entityTypesService: EntityTypesService,
+    @Inject(GroupsService)
+    private readonly groupsService: GroupsService,
     @Inject(WorkspacesService)
     private readonly workspacesService: WorkspacesService,
   ) {}
 
   async listDocuments(userId: string, params: SpaceIdParams): Promise<DocumentRecord[]> {
-    const db = this.getDb();
     const space = await this.requireSpaceAccess(userId, params.spaceId);
 
-    const rows = await db
-      .select()
-      .from(documents)
-      .where(and(eq(documents.workspaceId, space.workspaceId), eq(documents.spaceId, space.id)))
-      .orderBy(desc(documents.updatedAt), asc(documents.createdAt));
+    return this.listDocumentsInScope(userId, {
+      workspaceId: space.workspaceId,
+      spaceId: space.id,
+      groupId: null,
+    });
+  }
 
-    return rows.map(toDocumentRecord);
+  async listGroupDocuments(userId: string, params: GroupIdParams): Promise<DocumentRecord[]> {
+    const group = await this.groupsService.requireGroupAccess(userId, params.groupId);
+
+    return this.listDocumentsInScope(userId, {
+      workspaceId: group.workspaceId,
+      spaceId: group.spaceId,
+      groupId: group.id,
+    });
   }
 
   async createDocument(
@@ -96,7 +108,28 @@ export class DocumentsService {
     payload: CreateDocumentRequest,
   ): Promise<DocumentDetailRecord> {
     const space = await this.requireSpaceAccess(userId, params.spaceId);
-    const entity = await this.createBackingEntity(userId, space, payload.title.trim(), payload.body);
+    const entity = await this.createBackingEntity(userId, space, null, payload.title.trim(), payload.body);
+
+    return this.createDocumentForEntity(userId, entity, {
+      title: payload.title,
+      body: payload.body,
+    });
+  }
+
+  async createGroupDocument(
+    userId: string,
+    params: GroupIdParams,
+    payload: CreateDocumentRequest,
+  ): Promise<DocumentDetailRecord> {
+    const group = await this.groupsService.requireGroupAccess(userId, params.groupId);
+    const space = await this.requireSpaceAccess(userId, group.spaceId);
+    const entity = await this.createBackingEntity(
+      userId,
+      space,
+      group.id,
+      payload.title.trim(),
+      payload.body,
+    );
 
     return this.createDocumentForEntity(userId, entity, {
       title: payload.title,
@@ -167,6 +200,32 @@ export class DocumentsService {
     return rows.map((row) => toDocumentBacklinkRecord(row.mention, toDocumentRecord(row.document)));
   }
 
+  private async listDocumentsInScope(
+    userId: string,
+    scope: {
+      workspaceId: string;
+      spaceId: string;
+      groupId: string | null;
+    },
+  ): Promise<DocumentRecord[]> {
+    const db = this.getDb();
+    await this.workspacesService.requireMembership(userId, scope.workspaceId);
+
+    const rows = await db
+      .select()
+      .from(documents)
+      .where(
+        and(
+          eq(documents.workspaceId, scope.workspaceId),
+          eq(documents.spaceId, scope.spaceId),
+          scope.groupId ? eq(documents.groupId, scope.groupId) : isNull(documents.groupId),
+        ),
+      )
+      .orderBy(desc(documents.updatedAt), asc(documents.createdAt));
+
+    return rows.map(toDocumentRecord);
+  }
+
   private async createDocumentForEntity(
     userId: string,
     entity: EntityRow,
@@ -178,6 +237,7 @@ export class DocumentsService {
     const body = await this.normalizeDocumentBody({
       workspaceId: entity.workspaceId,
       spaceId: entity.spaceId,
+      groupId: entity.groupId,
       ownerEntityId: entity.id,
       documentId,
       body: payload.body ?? [],
@@ -186,6 +246,7 @@ export class DocumentsService {
     await this.applySyncedLinkUpdates(userId, {
       workspaceId: entity.workspaceId,
       spaceId: entity.spaceId,
+      groupId: entity.groupId,
       documentId,
       body,
     });
@@ -207,6 +268,7 @@ export class DocumentsService {
         id: documentId,
         workspaceId: entity.workspaceId,
         spaceId: entity.spaceId,
+        groupId: entity.groupId,
         entityId: entity.id,
         title,
         body,
@@ -224,6 +286,7 @@ export class DocumentsService {
             documentId,
             workspaceId: entity.workspaceId,
             spaceId: entity.spaceId,
+            groupId: entity.groupId,
             entityId: mention.entityId,
             blockId: mention.blockId,
             label: mention.label,
@@ -239,6 +302,7 @@ export class DocumentsService {
       documentId,
       workspaceId: entity.workspaceId,
       spaceId: entity.spaceId,
+      groupId: entity.groupId,
       sourceEntityId: entity.id,
       mentions: mentionRows,
     });
@@ -257,6 +321,7 @@ export class DocumentsService {
     const nextBody = await this.normalizeDocumentBody({
       workspaceId: entity.workspaceId,
       spaceId: entity.spaceId,
+      groupId: entity.groupId,
       ownerEntityId: entity.id,
       documentId: document.id,
       body: payload.body ?? toDocumentRecord(document).body,
@@ -265,6 +330,7 @@ export class DocumentsService {
     await this.applySyncedLinkUpdates(userId, {
       workspaceId: entity.workspaceId,
       spaceId: entity.spaceId,
+      groupId: entity.groupId,
       documentId: document.id,
       body: nextBody,
     });
@@ -302,6 +368,7 @@ export class DocumentsService {
             documentId: document.id,
             workspaceId: entity.workspaceId,
             spaceId: entity.spaceId,
+            groupId: entity.groupId,
             entityId: mention.entityId,
             blockId: mention.blockId,
             label: mention.label,
@@ -317,6 +384,7 @@ export class DocumentsService {
       documentId: document.id,
       workspaceId: entity.workspaceId,
       spaceId: entity.spaceId,
+      groupId: entity.groupId,
       sourceEntityId: entity.id,
       mentions: mentionRows,
     });
@@ -327,11 +395,17 @@ export class DocumentsService {
   private async normalizeDocumentBody(input: {
     workspaceId: string;
     spaceId: string;
+    groupId: string | null;
     ownerEntityId: string;
     documentId: string;
     body: DocumentBlock[];
   }) {
-    const documentsInSpace = await this.listSpaceDocuments(input.workspaceId, input.spaceId, input.documentId);
+    const documentsInSpace = await this.listSpaceDocuments(
+      input.workspaceId,
+      input.spaceId,
+      input.groupId,
+      input.documentId,
+    );
     const definitionMap = buildDocumentLinkDefinitionIndex(documentsInSpace);
 
     return input.body.map((block) => {
@@ -458,11 +532,17 @@ export class DocumentsService {
     input: {
       workspaceId: string;
       spaceId: string;
+      groupId: string | null;
       documentId: string;
       body: DocumentBlock[];
     },
   ) {
-    const documentsInSpace = await this.listSpaceDocuments(input.workspaceId, input.spaceId, input.documentId);
+    const documentsInSpace = await this.listSpaceDocuments(
+      input.workspaceId,
+      input.spaceId,
+      input.groupId,
+      input.documentId,
+    );
     const definitionMap = buildDocumentLinkDefinitionIndex(documentsInSpace);
     const syncEdits = new Map<
       string,
@@ -541,6 +621,7 @@ export class DocumentsService {
   private async createBackingEntity(
     userId: string,
     space: SpaceRow,
+    groupId: string | null,
     title: string,
     body: DocumentBlock[],
   ): Promise<EntityRow> {
@@ -553,6 +634,7 @@ export class DocumentsService {
         id: randomUUID(),
         workspaceId: space.workspaceId,
         spaceId: space.id,
+        groupId,
         entityTypeId: defaultType?.id ?? null,
         title,
         summary: previewText || null,
@@ -591,6 +673,7 @@ export class DocumentsService {
         and(
           eq(entities.workspaceId, document.workspaceId),
           eq(entities.spaceId, document.spaceId),
+          document.groupId ? eq(entities.groupId, document.groupId) : isNull(entities.groupId),
           inArray(entities.id, entityIds),
         ),
       );
@@ -601,7 +684,7 @@ export class DocumentsService {
   }
 
   private async buildMentionRows(
-    entity: Pick<EntityRow, 'id' | 'workspaceId' | 'spaceId'>,
+    entity: Pick<EntityRow, 'id' | 'workspaceId' | 'spaceId' | 'groupId'>,
     body: DocumentBlock[],
   ): Promise<DocumentMentionRow[]> {
     const mentions: DocumentMentionRow[] = body.flatMap((block) =>
@@ -633,6 +716,7 @@ export class DocumentsService {
         and(
           eq(entities.workspaceId, entity.workspaceId),
           eq(entities.spaceId, entity.spaceId),
+          entity.groupId ? eq(entities.groupId, entity.groupId) : isNull(entities.groupId),
           inArray(entities.id, uniqueEntityIds),
         ),
       );
@@ -641,7 +725,7 @@ export class DocumentsService {
       throw new ApiException(
         HttpStatus.BAD_REQUEST,
         'VALIDATION_ERROR',
-        'Document mentions must reference existing entities in the same space',
+        'Document mentions must reference existing entities in the same space and group context',
       );
     }
 
@@ -654,6 +738,7 @@ export class DocumentsService {
       documentId: string;
       workspaceId: string;
       spaceId: string;
+      groupId: string | null;
       sourceEntityId: string;
       mentions: DocumentMentionRow[];
     },
@@ -697,6 +782,7 @@ export class DocumentsService {
         and(
           eq(relations.workspaceId, input.workspaceId),
           eq(relations.spaceId, input.spaceId),
+          input.groupId ? eq(relations.groupId, input.groupId) : isNull(relations.groupId),
           eq(relations.relationType, DOCUMENT_RELATION_TYPE),
         ),
       );
@@ -745,6 +831,7 @@ export class DocumentsService {
           id: randomUUID(),
           workspaceId: input.workspaceId,
           spaceId: input.spaceId,
+          groupId: input.groupId,
           fromEntityId: entry.fromEntityId,
           toEntityId: entry.toEntityId,
           relationType: DOCUMENT_RELATION_TYPE,
@@ -768,13 +855,20 @@ export class DocumentsService {
   private async listSpaceDocuments(
     workspaceId: string,
     spaceId: string,
+    groupId: string | null,
     excludeDocumentId?: string,
   ): Promise<DocumentRecord[]> {
     const db = this.getDb();
     const rows = await db
       .select()
       .from(documents)
-      .where(and(eq(documents.workspaceId, workspaceId), eq(documents.spaceId, spaceId)))
+      .where(
+        and(
+          eq(documents.workspaceId, workspaceId),
+          eq(documents.spaceId, spaceId),
+          groupId ? eq(documents.groupId, groupId) : isNull(documents.groupId),
+        ),
+      )
       .orderBy(desc(documents.updatedAt), asc(documents.createdAt));
 
     return rows

@@ -104,6 +104,36 @@ export const spaces = pgTable(
   }),
 );
 
+export const groups = pgTable(
+  'groups',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    spaceId: text('space_id')
+      .notNull()
+      .references(() => spaces.id, { onDelete: 'cascade' }),
+    createdByUserId: text('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    name: text('name').notNull(),
+    slug: text('slug').notNull(),
+    description: text('description'),
+    createdAt: timestamp('created_at', { mode: 'string', withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { mode: 'string', withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    spaceSlugUnique: unique('groups_space_slug_unique').on(table.spaceId, table.slug),
+    workspaceIdx: index('groups_workspace_idx').on(table.workspaceId),
+    spaceIdx: index('groups_space_idx').on(table.spaceId),
+  }),
+);
+
 export const spaceCanvasStates = pgTable(
   'space_canvas_states',
   {
@@ -129,6 +159,29 @@ export const spaceCanvasStates = pgTable(
       .defaultNow(),
   },
 );
+
+export const groupCanvasStates = pgTable('group_canvas_states', {
+  groupId: text('group_id')
+    .primaryKey()
+    .references(() => groups.id, { onDelete: 'cascade' }),
+  layout: jsonb('layout')
+    .notNull()
+    .default(
+      sql`'{"viewport":{"zoom":1,"offset":{"x":0,"y":0}},"nodes":[],"edges":[]}'::jsonb`,
+    ),
+  createdByUserId: text('created_by_user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'restrict' }),
+  updatedByUserId: text('updated_by_user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'restrict' }),
+  createdAt: timestamp('created_at', { mode: 'string', withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp('updated_at', { mode: 'string', withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
 
 export const entityTypes = pgTable(
   'entity_types',
@@ -204,6 +257,7 @@ export const entities = pgTable(
     spaceId: text('space_id')
       .notNull()
       .references(() => spaces.id, { onDelete: 'cascade' }),
+    groupId: text('group_id').references(() => groups.id, { onDelete: 'cascade' }),
     entityTypeId: text('entity_type_id').references(() => entityTypes.id, { onDelete: 'set null' }),
     title: text('title').notNull(),
     summary: text('summary'),
@@ -224,6 +278,7 @@ export const entities = pgTable(
   (table) => ({
     workspaceIdx: index('entities_workspace_idx').on(table.workspaceId),
     spaceIdx: index('entities_space_idx').on(table.spaceId),
+    groupIdx: index('entities_group_idx').on(table.groupId),
     entityTypeIdx: index('entities_entity_type_idx').on(table.entityTypeId),
   }),
 );
@@ -238,6 +293,7 @@ export const documents = pgTable(
     spaceId: text('space_id')
       .notNull()
       .references(() => spaces.id, { onDelete: 'cascade' }),
+    groupId: text('group_id').references(() => groups.id, { onDelete: 'cascade' }),
     entityId: text('entity_id')
       .notNull()
       .references(() => entities.id, { onDelete: 'cascade' }),
@@ -260,6 +316,7 @@ export const documents = pgTable(
   (table) => ({
     workspaceIdx: index('documents_workspace_idx').on(table.workspaceId),
     spaceIdx: index('documents_space_idx').on(table.spaceId),
+    groupIdx: index('documents_group_idx').on(table.groupId),
     entityUnique: unique('documents_entity_unique').on(table.entityId),
     entityIdx: index('documents_entity_idx').on(table.entityId),
   }),
@@ -275,6 +332,7 @@ export const savedViews = pgTable(
     spaceId: text('space_id')
       .notNull()
       .references(() => spaces.id, { onDelete: 'cascade' }),
+    groupId: text('group_id').references(() => groups.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     description: text('description'),
     entityTypeId: text('entity_type_id').references(() => entityTypes.id, { onDelete: 'set null' }),
@@ -298,6 +356,7 @@ export const savedViews = pgTable(
   (table) => ({
     workspaceIdx: index('saved_views_workspace_idx').on(table.workspaceId),
     spaceIdx: index('saved_views_space_idx').on(table.spaceId),
+    groupIdx: index('saved_views_group_idx').on(table.groupId),
     entityTypeIdx: index('saved_views_entity_type_idx').on(table.entityTypeId),
   }),
 );
@@ -315,6 +374,7 @@ export const documentEntityMentions = pgTable(
     spaceId: text('space_id')
       .notNull()
       .references(() => spaces.id, { onDelete: 'cascade' }),
+    groupId: text('group_id').references(() => groups.id, { onDelete: 'cascade' }),
     entityId: text('entity_id')
       .notNull()
       .references(() => entities.id, { onDelete: 'cascade' }),
@@ -332,6 +392,7 @@ export const documentEntityMentions = pgTable(
     documentIdx: index('document_entity_mentions_document_idx').on(table.documentId),
     entityIdx: index('document_entity_mentions_entity_idx').on(table.entityId),
     spaceIdx: index('document_entity_mentions_space_idx').on(table.spaceId),
+    groupIdx: index('document_entity_mentions_group_idx').on(table.groupId),
   }),
 );
 
@@ -345,6 +406,7 @@ export const relations = pgTable(
     spaceId: text('space_id')
       .notNull()
       .references(() => spaces.id, { onDelete: 'cascade' }),
+    groupId: text('group_id').references(() => groups.id, { onDelete: 'cascade' }),
     fromEntityId: text('from_entity_id')
       .notNull()
       .references(() => entities.id, { onDelete: 'cascade' }),
@@ -369,6 +431,7 @@ export const relations = pgTable(
   (table) => ({
     workspaceIdx: index('relations_workspace_idx').on(table.workspaceId),
     spaceIdx: index('relations_space_idx').on(table.spaceId),
+    groupIdx: index('relations_group_idx').on(table.groupId),
     fromEntityIdx: index('relations_from_entity_idx').on(table.fromEntityId),
     toEntityIdx: index('relations_to_entity_idx').on(table.toEntityId),
   }),

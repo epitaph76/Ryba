@@ -7,6 +7,7 @@ import type {
   EntityRecord,
   EntityTypeFieldRecord,
   EntityTypeRecord,
+  GroupRecord,
   JsonObject,
   RelationRecord,
   SavedViewRecord,
@@ -24,6 +25,8 @@ import type {
   documentEntityMentions,
   documents,
   savedViews,
+  groups,
+  groupCanvasStates,
   spaceCanvasStates,
   spaces,
   users,
@@ -35,6 +38,7 @@ type UserRow = typeof users.$inferSelect;
 type WorkspaceRow = typeof workspaces.$inferSelect;
 type WorkspaceMemberRow = typeof workspaceMembers.$inferSelect;
 type SpaceRow = typeof spaces.$inferSelect;
+type GroupRow = typeof groups.$inferSelect;
 type EntityRow = typeof entities.$inferSelect;
 type EntityTypeRow = typeof entityTypes.$inferSelect;
 type EntityTypeFieldRow = typeof entityTypeFields.$inferSelect;
@@ -43,6 +47,7 @@ type DocumentRow = typeof documents.$inferSelect;
 type SavedViewRow = typeof savedViews.$inferSelect;
 type DocumentEntityMentionRow = typeof documentEntityMentions.$inferSelect;
 type SpaceCanvasStateRow = typeof spaceCanvasStates.$inferSelect;
+type GroupCanvasStateRow = typeof groupCanvasStates.$inferSelect;
 
 const ensureJsonObject = (value: unknown): JsonObject => {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
@@ -90,10 +95,23 @@ export const toSpaceRecord = (row: SpaceRow): SpaceRecord => ({
   updatedAt: row.updatedAt,
 });
 
+export const toGroupRecord = (row: GroupRow): GroupRecord => ({
+  id: row.id,
+  workspaceId: row.workspaceId,
+  spaceId: row.spaceId,
+  createdByUserId: row.createdByUserId,
+  name: row.name,
+  slug: row.slug,
+  description: row.description,
+  createdAt: row.createdAt,
+  updatedAt: row.updatedAt,
+});
+
 export const toEntityRecord = (row: EntityRow): EntityRecord => ({
   id: row.id,
   workspaceId: row.workspaceId,
   spaceId: row.spaceId,
+  groupId: row.groupId,
   entityTypeId: row.entityTypeId,
   title: row.title,
   summary: row.summary,
@@ -140,6 +158,7 @@ export const toRelationRecord = (row: RelationRow): RelationRecord => ({
   id: row.id,
   workspaceId: row.workspaceId,
   spaceId: row.spaceId,
+  groupId: row.groupId,
   fromEntityId: row.fromEntityId,
   toEntityId: row.toEntityId,
   relationType: row.relationType,
@@ -154,6 +173,7 @@ export const toDocumentRecord = (row: DocumentRow): DocumentRecord => ({
   id: row.id,
   workspaceId: row.workspaceId,
   spaceId: row.spaceId,
+  groupId: row.groupId,
   entityId: row.entityId,
   title: row.title,
   body: documentBlockSchema.array().parse(row.body),
@@ -168,6 +188,7 @@ export const toSavedViewRecord = (row: SavedViewRow): SavedViewRecord => ({
   id: row.id,
   workspaceId: row.workspaceId,
   spaceId: row.spaceId,
+  groupId: row.groupId,
   name: row.name,
   description: row.description,
   entityTypeId: row.entityTypeId,
@@ -205,11 +226,18 @@ export const toDocumentBacklinkRecord = (
   updatedAt: document.updatedAt,
 });
 
-export const toCanvasStateRecord = (row: SpaceCanvasStateRow): CanvasStateRecord => {
+export const toCanvasStateRecord = (
+  row: SpaceCanvasStateRow | GroupCanvasStateRow,
+  input: {
+    spaceId: string;
+    groupId: string | null;
+  },
+): CanvasStateRecord => {
   const layout = canvasLayoutSchema.parse(row.layout);
 
   return {
-    spaceId: row.spaceId,
+    spaceId: input.spaceId,
+    groupId: input.groupId,
     nodes: layout.nodes,
     edges: layout.edges,
     viewport: layout.viewport,

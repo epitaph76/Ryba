@@ -66,6 +66,7 @@ describe('entity-detail-model', () => {
         id: 'entity-1',
         workspaceId: 'workspace-1',
         spaceId: 'space-1',
+        groupId: null,
         entityTypeId: 'type-project',
         title: 'Launch website',
         summary: 'Q2 initiative',

@@ -2,6 +2,7 @@ import { Body, Controller, Get, Inject, Param, Put, UseGuards } from '@nestjs/co
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { z } from 'zod';
 import {
+  groupIdParamsSchema,
   saveCanvasStateRequestSchema,
   spaceIdParamsSchema,
 } from '@ryba/schemas';
@@ -15,16 +16,17 @@ import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { CanvasService } from './canvas.service';
 
 type SpaceIdParams = z.infer<typeof spaceIdParamsSchema>;
+type GroupIdParams = z.infer<typeof groupIdParamsSchema>;
 type SaveCanvasStateRequest = z.infer<typeof saveCanvasStateRequestSchema>;
 
 @ApiTags('canvas')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
-@Controller('spaces/:spaceId/canvas')
+@Controller()
 export class CanvasController {
   constructor(@Inject(CanvasService) private readonly canvasService: CanvasService) {}
 
-  @Get()
+  @Get('spaces/:spaceId/canvas')
   async getCanvasState(
     @CurrentUser() user: AuthenticatedUser,
     @Param(new ZodValidationPipe(spaceIdParamsSchema))
@@ -35,7 +37,18 @@ export class CanvasController {
     return envelope(canvasState);
   }
 
-  @Put()
+  @Get('groups/:groupId/canvas')
+  async getGroupCanvasState(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param(new ZodValidationPipe(groupIdParamsSchema))
+    params: GroupIdParams,
+  ): Promise<ApiEnvelope<CanvasStateRecord>> {
+    const canvasState = await this.canvasService.getGroupCanvasState(user.userId, params);
+
+    return envelope(canvasState);
+  }
+
+  @Put('spaces/:spaceId/canvas')
   async saveCanvasState(
     @CurrentUser() user: AuthenticatedUser,
     @Param(new ZodValidationPipe(spaceIdParamsSchema))
@@ -44,6 +57,19 @@ export class CanvasController {
     payload: SaveCanvasStateRequest,
   ): Promise<ApiEnvelope<CanvasStateRecord>> {
     const canvasState = await this.canvasService.saveCanvasState(user.userId, params, payload);
+
+    return envelope(canvasState);
+  }
+
+  @Put('groups/:groupId/canvas')
+  async saveGroupCanvasState(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param(new ZodValidationPipe(groupIdParamsSchema))
+    params: GroupIdParams,
+    @Body(new ZodValidationPipe(saveCanvasStateRequestSchema))
+    payload: SaveCanvasStateRequest,
+  ): Promise<ApiEnvelope<CanvasStateRecord>> {
+    const canvasState = await this.canvasService.saveGroupCanvasState(user.userId, params, payload);
 
     return envelope(canvasState);
   }

@@ -6,6 +6,7 @@ import { DatabaseModule } from './database.module';
 import { DocumentsModule } from './documents/documents.module';
 import { EntitiesModule } from './entities/entities.module';
 import { EntityTypesModule } from './entity-types/entity-types.module';
+import { GroupsModule } from './groups/groups.module';
 import { HealthController } from './health.controller';
 import { RelationsModule } from './relations/relations.module';
 import { SpacesModule } from './spaces/spaces.module';
@@ -18,6 +19,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
     AuthModule,
     CanvasModule,
     DocumentsModule,
+    GroupsModule,
     WorkspacesModule,
     SpacesModule,
     ViewsModule,

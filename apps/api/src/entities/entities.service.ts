@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
 import {
   createEntityRequestSchema,
   entityIdParamsSchema,
+  groupIdParamsSchema,
   spaceIdParamsSchema,
   updateEntityRequestSchema,
 } from '@ryba/schemas';
@@ -16,9 +17,11 @@ import { DatabaseService } from '../database.service';
 import { toEntityRecord } from '../db/mappers';
 import { entities, spaces } from '../db/schema';
 import { EntityTypesService } from '../entity-types/entity-types.service';
+import { GroupsService } from '../groups/groups.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 
 type SpaceIdParams = z.infer<typeof spaceIdParamsSchema>;
+type GroupIdParams = z.infer<typeof groupIdParamsSchema>;
 type EntityIdParams = z.infer<typeof entityIdParamsSchema>;
 type CreateEntityRequest = z.infer<typeof createEntityRequestSchema>;
 type UpdateEntityRequest = z.infer<typeof updateEntityRequestSchema>;
@@ -30,6 +33,8 @@ export class EntitiesService {
     private readonly databaseService: DatabaseService,
     @Inject(EntityTypesService)
     private readonly entityTypesService: EntityTypesService,
+    @Inject(GroupsService)
+    private readonly groupsService: GroupsService,
     @Inject(WorkspacesService)
     private readonly workspacesService: WorkspacesService,
   ) {}
@@ -39,49 +44,58 @@ export class EntitiesService {
     params: SpaceIdParams,
     payload: CreateEntityRequest,
   ): Promise<EntityRecord> {
-    const db = this.getDb();
     const space = await this.requireSpaceAccess(userId, params.spaceId);
-    const entityType = await this.entityTypesService.resolveEntityTypeForWorkspace(
-      space.workspaceId,
-      payload.entityTypeId,
-    );
-    const properties = this.entityTypesService.validateEntityPropertiesForType(
-      entityType,
-      payload.properties ?? {},
-    );
 
-    const [insertedEntity] = await db
-      .insert(entities)
-      .values({
-        id: randomUUID(),
+    return this.createEntityInScope(
+      userId,
+      {
         workspaceId: space.workspaceId,
         spaceId: space.id,
-        entityTypeId: entityType?.id ?? null,
-        title: payload.title.trim(),
-        summary: payload.summary ?? null,
-        properties,
-        createdByUserId: userId,
-        updatedByUserId: userId,
-      })
-      .returning();
+        groupId: null,
+      },
+      payload,
+    );
+  }
 
-    return toEntityRecord(insertedEntity);
+  async createGroupEntity(
+    userId: string,
+    params: GroupIdParams,
+    payload: CreateEntityRequest,
+  ): Promise<EntityRecord> {
+    const group = await this.groupsService.requireGroupAccess(userId, params.groupId);
+
+    return this.createEntityInScope(
+      userId,
+      {
+        workspaceId: group.workspaceId,
+        spaceId: group.spaceId,
+        groupId: group.id,
+      },
+      payload,
+    );
   }
 
   async listEntities(
     userId: string,
     params: SpaceIdParams,
   ): Promise<EntityRecord[]> {
-    const db = this.getDb();
     const space = await this.requireSpaceAccess(userId, params.spaceId);
 
-    const rows = await db
-      .select()
-      .from(entities)
-      .where(and(eq(entities.workspaceId, space.workspaceId), eq(entities.spaceId, space.id)))
-      .orderBy(asc(entities.createdAt));
+    return this.listEntitiesInScope(userId, {
+      workspaceId: space.workspaceId,
+      spaceId: space.id,
+      groupId: null,
+    });
+  }
 
-    return rows.map(toEntityRecord);
+  async listGroupEntities(userId: string, params: GroupIdParams): Promise<EntityRecord[]> {
+    const group = await this.groupsService.requireGroupAccess(userId, params.groupId);
+
+    return this.listEntitiesInScope(userId, {
+      workspaceId: group.workspaceId,
+      spaceId: group.spaceId,
+      groupId: group.id,
+    });
   }
 
   async getEntity(userId: string, params: EntityIdParams): Promise<EntityRecord> {
@@ -165,6 +179,70 @@ export class EntitiesService {
     await this.workspacesService.requireMembership(userId, space.workspaceId);
 
     return space;
+  }
+
+  private async createEntityInScope(
+    userId: string,
+    scope: {
+      workspaceId: string;
+      spaceId: string;
+      groupId: string | null;
+    },
+    payload: CreateEntityRequest,
+  ): Promise<EntityRecord> {
+    const db = this.getDb();
+    const entityType = await this.entityTypesService.resolveEntityTypeForWorkspace(
+      scope.workspaceId,
+      payload.entityTypeId,
+    );
+    const properties = this.entityTypesService.validateEntityPropertiesForType(
+      entityType,
+      payload.properties ?? {},
+    );
+
+    const [insertedEntity] = await db
+      .insert(entities)
+      .values({
+        id: randomUUID(),
+        workspaceId: scope.workspaceId,
+        spaceId: scope.spaceId,
+        groupId: scope.groupId,
+        entityTypeId: entityType?.id ?? null,
+        title: payload.title.trim(),
+        summary: payload.summary ?? null,
+        properties,
+        createdByUserId: userId,
+        updatedByUserId: userId,
+      })
+      .returning();
+
+    return toEntityRecord(insertedEntity);
+  }
+
+  private async listEntitiesInScope(
+    userId: string,
+    scope: {
+      workspaceId: string;
+      spaceId: string;
+      groupId: string | null;
+    },
+  ): Promise<EntityRecord[]> {
+    const db = this.getDb();
+    await this.workspacesService.requireMembership(userId, scope.workspaceId);
+
+    const rows = await db
+      .select()
+      .from(entities)
+      .where(
+        and(
+          eq(entities.workspaceId, scope.workspaceId),
+          eq(entities.spaceId, scope.spaceId),
+          scope.groupId ? eq(entities.groupId, scope.groupId) : isNull(entities.groupId),
+        ),
+      )
+      .orderBy(asc(entities.createdAt));
+
+    return rows.map(toEntityRecord);
   }
 
   private getDb() {

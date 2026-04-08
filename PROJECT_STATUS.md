@@ -4,7 +4,7 @@
 
 ## Last Updated
 
-`2026-04-06`
+`2026-04-08`
 
 ## Назначение файла
 
@@ -60,7 +60,7 @@
 | S-4 | Entity detail и schema layer | `done` | Введены entity types, field definitions, валидация значений и завершённый detail/schema слой с backend, web и тестовой интеграцией |
 | S-5 | Documents и narrative layer | `done` | Реализован entity-backed document layer с fullscreen editor, mentions -> auto-relations, backlinks и narrative-контекстом |
 | S-6 | Tables и saved views | `done` | Реализованы table/list lenses, saved view persistence, виртуализация и тестовое покрытие этапа |
-| S-7 | Groups как subspaces | `planned` | Должна появиться ключевая фича подпространств |
+| S-7 | Groups как subspaces | `done` | Реализованы локальные group-subspaces с изоляцией canvas, documents, saved views и graph-контекста |
 | S-8 | Permissions и activity | `planned` | Должна появиться базовая многопользовательская пригодность |
 | S-9 | Realtime collaboration | `planned` | Должно появиться совместное редактирование документов |
 | S-10 | External data и queries | `planned` | Должен появиться data layer для read-only внешних данных |
@@ -69,7 +69,7 @@
 
 ## Текущее состояние на сейчас
 
-На текущий момент завершены семь шагов: стартовый инфраструктурный bootstrap (S-0), техническая разведка (S-1), core domain + backend skeleton (S-2), базовая канва поверх реальных данных (S-3), entity detail + schema layer (S-4), documents + narrative layer (S-5) и tables + saved views (S-6).
+На текущий момент завершены восемь шагов: стартовый инфраструктурный bootstrap (S-0), техническая разведка (S-1), core domain + backend skeleton (S-2), базовая канва поверх реальных данных (S-3), entity detail + schema layer (S-4), documents + narrative layer (S-5), tables + saved views (S-6) и groups как subspaces (S-7).
 
 ### Что уже сделано
 
@@ -120,10 +120,14 @@
 - в `apps/web` поверх того же space встроены table/list lenses с фильтрами, сортировкой, настройкой колонок, saved views и виртуализацией длинных наборов;
 - выбор строки из таблицы или списка использует уже существующую detail side panel, поэтому запись можно открыть без ухода из контекста выборки;
 - добавлены S-6 автотесты и документ `docs/S6_TABLES_SAVED_VIEWS_IMPLEMENTATION.md`.
+- в PostgreSQL добавлены `groups`, `group_canvas_states` и `groupId`-scope для `entities`, `relations`, `documents`, `saved_views` и `document_entity_mentions`;
+- в `apps/api` добавлены `GET/POST /spaces/:spaceId/groups`, а также group-scoped endpoints для `entities`, `relations`, `documents`, `saved views` и `canvas` с запретом cross-context связей;
+- в `apps/web` добавлены создание group, переключение между root space и group-контекстом, а также локальная загрузка и сохранение канвы, документов и представлений внутри выбранного subspace;
+- добавлены S-7 проверки `apps/api/test/s7.integration.test.ts`, `apps/web/src/subspace-model.test.ts` и документ `docs/S7_GROUPS_SUBSPACES_IMPLEMENTATION.md`.
 
 ### Что это означает
 
-Это означает, что репозиторий уже содержит не только core-доменную базу, но и несколько рабочих слоёв поверх неё: канва больше не является демкой, типизированный S-4 слой уже оформлен, поверх сущностей появился рабочий narrative/document слой, а теперь и S-6 table layer с сохранёнными представлениями живёт на том же источнике истины.
+Это означает, что репозиторий уже содержит не только core-доменную базу, но и несколько рабочих слоёв поверх неё: канва больше не является демкой, типизированный S-4 слой уже оформлен, поверх сущностей появился рабочий narrative/document слой, S-6 table layer с сохранёнными представлениями живёт на том же источнике истины, а S-7 добавляет локальные subspace-контексты внутри space без отдельной параллельной модели данных.
 
 ### Что это ещё не означает
 
@@ -133,13 +137,12 @@
 - production-реализации `web` и `api`;
 - production-grade data layer с эксплуатационной наблюдаемостью и hardening;
 - прикладных пользовательских сценариев;
-- групп как subspaces;
 - permission model;
 - production-grade collaboration layer;
-- groups/subspaces и permission model как завершённых рабочих продуктовых слоёв.
+- permission/activity model как завершённого рабочего продуктового слоя.
 
 То есть продукт как система ещё не построен.
-Построены стартовый каркас, технические прототипы, рабочее S-2 доменное ядро, базовая S-3 канва, завершённый S-4 слой типов сущностей и полей, S-5 документный слой с narrative-контекстом вокруг сущностей, а также S-6 структурированные представления с saved views.
+Построены стартовый каркас, технические прототипы, рабочее S-2 доменное ядро, базовая S-3 канва, завершённый S-4 слой типов сущностей и полей, S-5 документный слой с narrative-контекстом вокруг сущностей, S-6 структурированные представления с saved views, а также S-7 group/subspace слой с локальными контекстами внутри space.
 
 ---
 
@@ -829,7 +832,7 @@
 
 ## S-7. Groups как Subspaces
 
-**Статус:** `planned`
+**Статус:** `done`
 
 ### Цель
 
@@ -880,6 +883,14 @@
 - локальные views внутри group;
 - локальный document context;
 - локальный canvas context.
+
+### Что уже закрыто в рамках этапа
+
+- `group` реализован как отдельная запись внутри `space`, без вложенной иерархии и без расширения модели дальше v1;
+- root space и group-контекст разведены через явный `groupId`: корневой контекст остаётся на `groupId = null`, а локальные сущности, связи, документы, saved views и canvas живут внутри конкретной группы;
+- в `apps/api` добавлены routes для создания и чтения `groups`, group-scoped `entities`, `relations`, `documents`, `saved views` и `canvas`, а cross-context relation запрещён проверками;
+- в `apps/web` пользователь может создать `group`, войти внутрь неё, вернуться в root space и продолжать работать с локальной канвой, документами и представлениями без смешивания контекстов;
+- этап покрыт `apps/api/test/s7.integration.test.ts`, `apps/web/src/subspace-model.test.ts`, а также проходит `api/web typecheck`, `api/web test` и сборки.
 
 ### Сценарии использования фич этапа
 
@@ -1686,11 +1697,11 @@ CRM появился как прикладной сценарий, не разр
 
 Ближайший правильный ход:
 
-1. перейти к S-7 groups как subspaces;
-2. использовать уже готовые S-3 canvas, S-5 document layer и S-6 table layer как базу для локальных подпространств;
-3. сохранить принцип одного источника истины: group должен переиспользовать те же entities, documents и views, а не плодить параллельную модель;
-4. расширять smoke/integration coverage уже вокруг group-контекста, не ломая текущий Docker-first workflow;
-5. не превращать S-7 в произвольную иерархию вложенных workspace раньше, чем будет закрыт конкретный сценарий subspace-внутри-space.
+1. перейти к S-8 permissions и activity;
+2. опереться на уже введённые границы между root space и group-контекстом, а не размывать их новой универсализацией;
+3. добавить базовую модель командной пригодности поверх существующих `entities`, `documents`, `views` и `groups`, не меняя их публичные контракты без необходимости;
+4. расширять smoke/integration coverage вокруг multi-user сценариев и activity trail, не ломая текущий Docker-first workflow;
+5. не превращать S-8 в full enterprise ACL раньше, чем будет закрыт базовый сценарий ролей, видимости и истории действий.
 
 ## Главный контрольный вопрос проекта
 

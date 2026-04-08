@@ -25,6 +25,7 @@ import type {
   EntityRecord,
   EntityTypeFieldRecord,
   EntityTypeRecord,
+  GroupRecord,
   RelationRecord,
   SavedViewRecord,
   SpaceRecord,
@@ -33,6 +34,13 @@ import type {
 } from '@ryba/types';
 
 import { canvasApi } from './canvas-api';
+import {
+  restoreDeletedEntity,
+  stageEntityDeletion,
+  type CanvasDeletionState,
+  type CanvasDeletionStateInput,
+  type PendingEntityDeletion,
+} from './canvas-delete-undo';
 import { buildDocumentLinkDefinitionIndex } from './document-link-runtime';
 import {
   buildCanvasGraph,
@@ -64,6 +72,7 @@ import {
   isEntityOwnedDocument,
 } from './entity-document-model';
 import { getFieldOptions, type FieldEditorValue } from './field-renderers';
+import { isRecordInSubspaceContext, resolveActiveSubspace } from './subspace-model';
 import { TableView } from './components/TableView';
 import {
   buildDraftFromSavedView,
@@ -75,6 +84,7 @@ import {
 
 const TOKEN_STORAGE_KEY = 'ryba_s3_access_token';
 const LAST_EMAIL_STORAGE_KEY = 'ryba_last_email';
+const ENTITY_DELETE_UNDO_WINDOW_MS = 8000;
 
 function EntityCardNode({ data, selected }: NodeProps<CanvasEntityNodeData>) {
   return (
@@ -132,6 +142,7 @@ const fromCommaSeparated = (value: string) =>
 
 export function App() {
   const flowWrapperRef = useRef<HTMLDivElement | null>(null);
+  const pendingEntityDeletionTimerRef = useRef<number | null>(null);
   const [flowInstance, setFlowInstance] = useState<
     ReactFlowInstance<CanvasEntityNodeData, { relationId: string; relationType: string }> | null
   >(null);
@@ -140,6 +151,7 @@ export function App() {
   const [currentUser, setCurrentUser] = useState<UserRecord | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
   const [spaces, setSpaces] = useState<SpaceRecord[]>([]);
+  const [groups, setGroups] = useState<GroupRecord[]>([]);
   const [entities, setEntities] = useState<EntityRecord[]>([]);
   const [entityTypes, setEntityTypes] = useState<EntityTypeRecord[]>([]);
   const [relations, setRelations] = useState<RelationRecord[]>([]);
@@ -148,6 +160,7 @@ export function App() {
   const [edgeLayouts, setEdgeLayouts] = useState<CanvasEdgeLayout[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('');
   const [selectedSpaceId, setSelectedSpaceId] = useState('');
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [canvasState, setCanvasState] = useState<CanvasStateRecord | null>(null);
   const [viewport, setViewport] = useState(defaultViewport);
@@ -179,6 +192,9 @@ export function App() {
   const [tableLensDraft, setTableLensDraft] = useState<StructuredViewDraft>(() =>
     createDefaultTableDraft([]),
   );
+  const [pendingEntityDeletion, setPendingEntityDeletion] = useState<PendingEntityDeletion | null>(
+    null,
+  );
 
   const [email, setEmail] = useState(() => localStorage.getItem(LAST_EMAIL_STORAGE_KEY) ?? 'demo@ryba.local');
   const [password, setPassword] = useState('Password123');
@@ -187,12 +203,47 @@ export function App() {
   const [workspaceSlug, setWorkspaceSlug] = useState('canvas-workspace');
   const [spaceName, setSpaceName] = useState('Общее');
   const [spaceSlug, setSpaceSlug] = useState('general');
+  const [groupName, setGroupName] = useState('Enterprise Clients');
+  const [groupSlug, setGroupSlug] = useState('enterprise-clients');
+  const [groupDescription, setGroupDescription] = useState(
+    'Локальный контекст для отдельной темы или направления',
+  );
   const [quickEntityTitle, setQuickEntityTitle] = useState('Новая сущность');
   const [quickEntitySummary, setQuickEntitySummary] = useState('Создано из канвы S3');
+  const tokenRef = useRef<string | null>(token);
+  const selectedSpaceIdRef = useRef(selectedSpaceId);
+  const selectedGroupIdRef = useRef<string | null>(selectedGroupId);
+  const liveCanvasStateRef = useRef<CanvasDeletionStateInput>({
+    spaceId: '',
+    groupId: null,
+    entityTypes: [],
+    entities: [],
+    relations: [],
+    nodes: [],
+    edgeLayouts: [],
+    viewport: defaultViewport,
+    canvasUpdatedAt: null,
+    documents: [],
+    selectedEntityId: null,
+  });
 
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null;
   const selectedSpace = spaces.find((space) => space.id === selectedSpaceId) ?? null;
+  const activeSubspace = resolveActiveSubspace({
+    spaceId: selectedSpaceId,
+    selectedGroupId,
+    groups,
+  });
+  const selectedGroup = activeSubspace.group;
   const selectedEntity = entities.find((entity) => entity.id === selectedEntityId) ?? null;
+  const activePendingDeletion =
+    pendingEntityDeletion &&
+    isRecordInSubspaceContext(pendingEntityDeletion.entity, {
+      spaceId: selectedSpaceId,
+      groupId: activeSubspace.groupId,
+    })
+      ? pendingEntityDeletion
+      : null;
   const documentEditorEntity =
     entities.find((entity) => entity.id === documentEditorEntityId) ?? null;
   const selectedEntityType = getEntityTypeById(entityTypes, entityDetailDraft?.entityTypeId);
@@ -263,6 +314,29 @@ export function App() {
     });
   };
 
+  const clearPendingEntityDeletionTimer = () => {
+    if (pendingEntityDeletionTimerRef.current === null) {
+      return;
+    }
+
+    window.clearTimeout(pendingEntityDeletionTimerRef.current);
+    pendingEntityDeletionTimerRef.current = null;
+  };
+
+  const applyLocalCanvasState = (nextState: CanvasDeletionState) => {
+    setEntities(nextState.entities);
+    setRelations(nextState.relations);
+    setCanvasState(nextState.canvasState);
+    setNodes(nextState.nodes);
+    setEdges(nextState.edges);
+    setEdgeLayouts(nextState.edgeLayouts);
+    setViewport(nextState.canvasState.viewport);
+    setSpaceDocuments(nextState.documents);
+    setSelectedEntityId(nextState.selectedEntityId);
+    setDocumentBacklinks([]);
+    setCanvasError(null);
+  };
+
   const selectEntityOnCanvas = (entityId: string | null) => {
     setSelectedEntityId(entityId);
     setNodes((current) =>
@@ -287,11 +361,13 @@ export function App() {
   };
 
   const clearSession = () => {
+    clearPendingEntityDeletionTimer();
     localStorage.removeItem(TOKEN_STORAGE_KEY);
     setToken(null);
     setCurrentUser(null);
     setWorkspaces([]);
     setSpaces([]);
+    setGroups([]);
     setEntities([]);
     setEntityTypes([]);
     setRelations([]);
@@ -301,6 +377,7 @@ export function App() {
     setCanvasState(null);
     setSelectedWorkspaceId('');
     setSelectedSpaceId('');
+    setSelectedGroupId(null);
     setSelectedEntityId(null);
     setActiveSchemaTypeId('');
     setEntityTypeDraft(createEmptyEntityTypeDraft());
@@ -315,6 +392,7 @@ export function App() {
     setSavedViews([]);
     setActiveSavedViewId(null);
     setTableLensDraft(createDefaultTableDraft([]));
+    setPendingEntityDeletion(null);
     setCanvasError(null);
     setSessionFeedback({
       tone: 'info',
@@ -395,14 +473,35 @@ export function App() {
     }
   };
 
-  const loadDocuments = async (activeToken: string, spaceId: string) => {
-    const response = await canvasApi.listDocuments(activeToken, spaceId);
+  const loadGroups = async (activeToken: string, spaceId: string) => {
+    const response = await canvasApi.listGroups(activeToken, spaceId);
+    setGroups(response.items);
+    setSelectedGroupId((current) =>
+      current && response.items.some((group) => group.id === current) ? current : null,
+    );
+    return response.items;
+  };
+
+  const loadDocuments = async (
+    activeToken: string,
+    spaceId: string,
+    groupId: string | null = activeSubspace.groupId,
+  ) => {
+    const response = groupId
+      ? await canvasApi.listGroupDocuments(activeToken, groupId)
+      : await canvasApi.listDocuments(activeToken, spaceId);
     setSpaceDocuments(response.items);
     return response.items;
   };
 
-  const loadSavedViews = async (activeToken: string, spaceId: string) => {
-    const response = await canvasApi.listSavedViews(activeToken, spaceId);
+  const loadSavedViews = async (
+    activeToken: string,
+    spaceId: string,
+    groupId: string | null = activeSubspace.groupId,
+  ) => {
+    const response = groupId
+      ? await canvasApi.listGroupSavedViews(activeToken, groupId)
+      : await canvasApi.listSavedViews(activeToken, spaceId);
     setSavedViews(response.items);
     setActiveSavedViewId((current) =>
       current && response.items.some((savedView) => savedView.id === current) ? current : null,
@@ -414,16 +513,23 @@ export function App() {
     activeToken: string,
     spaceId: string,
     focusEntityId: string | null = selectedEntityId,
+    groupId: string | null = activeSubspace.groupId,
   ) => {
     setCanvasLoading(true);
 
     try {
       const [entitiesResponse, relationsResponse, canvasResponse] = await Promise.all([
-        canvasApi.listEntities(activeToken, spaceId),
-        canvasApi.listRelations(activeToken, spaceId),
-        canvasApi.getCanvas(activeToken, spaceId),
-        loadSavedViews(activeToken, spaceId),
-        loadDocuments(activeToken, spaceId),
+        groupId
+          ? canvasApi.listGroupEntities(activeToken, groupId)
+          : canvasApi.listEntities(activeToken, spaceId),
+        groupId
+          ? canvasApi.listGroupRelations(activeToken, groupId)
+          : canvasApi.listRelations(activeToken, spaceId),
+        groupId
+          ? canvasApi.getGroupCanvas(activeToken, groupId)
+          : canvasApi.getCanvas(activeToken, spaceId),
+        loadSavedViews(activeToken, spaceId, groupId),
+        loadDocuments(activeToken, spaceId, groupId),
       ]);
 
       applyCanvasSnapshot(
@@ -487,6 +593,7 @@ export function App() {
 
     const nextCanvas: CanvasStateRecord = {
       spaceId: selectedSpaceId,
+      groupId: activeSubspace.groupId,
       nodes: nextEntities.map(
         (entity, index) =>
           liveNodeById.get(entity.id) ??
@@ -530,11 +637,18 @@ export function App() {
     activeToken: string,
     spaceId: string,
     focusEntityId: string | null = selectedEntityId,
+    groupId: string | null = activeSubspace.groupId,
   ) => {
     const [entitiesResponse, relationsResponse, documentsResponse] = await Promise.all([
-      canvasApi.listEntities(activeToken, spaceId),
-      canvasApi.listRelations(activeToken, spaceId),
-      canvasApi.listDocuments(activeToken, spaceId),
+      groupId
+        ? canvasApi.listGroupEntities(activeToken, groupId)
+        : canvasApi.listEntities(activeToken, spaceId),
+      groupId
+        ? canvasApi.listGroupRelations(activeToken, groupId)
+        : canvasApi.listRelations(activeToken, spaceId),
+      groupId
+        ? canvasApi.listGroupDocuments(activeToken, groupId)
+        : canvasApi.listDocuments(activeToken, spaceId),
     ]);
 
     applyCanvasDataPreservingLayout(
@@ -582,7 +696,9 @@ export function App() {
       viewport,
     }).payload;
 
-    const saved = await canvasApi.saveCanvas(token, selectedSpaceId, payload);
+    const saved = activeSubspace.groupId
+      ? await canvasApi.saveGroupCanvas(token, activeSubspace.groupId, payload)
+      : await canvasApi.saveCanvas(token, selectedSpaceId, payload);
     setCanvasState(saved);
     setEdgeLayouts(saved.edges);
     setViewport(saved.viewport);
@@ -613,10 +729,15 @@ export function App() {
 
     const title = quickEntityTitle.trim() || `Сущность ${entities.length + 1}`;
     const summary = quickEntitySummary.trim() || null;
-    const created = await canvasApi.createEntity(token, selectedSpaceId, {
-      title,
-      summary,
-    });
+    const created = activeSubspace.groupId
+      ? await canvasApi.createGroupEntity(token, activeSubspace.groupId, {
+          title,
+          summary,
+        })
+      : await canvasApi.createEntity(token, selectedSpaceId, {
+          title,
+          summary,
+        });
 
     const nextNodes = [
       ...nodes.map((node) => ({ ...node, selected: false })),
@@ -635,19 +756,71 @@ export function App() {
       } satisfies CanvasEntityNode,
     ];
 
-    await canvasApi.saveCanvas(
-      token,
-      selectedSpaceId,
-      serializeCanvasState({
-        spaceId: selectedSpaceId,
-        nodes: nextNodes,
-        edgeLayouts,
-        viewport,
-      }).payload,
-    );
+    const nextPayload = serializeCanvasState({
+      spaceId: selectedSpaceId,
+      nodes: nextNodes,
+      edgeLayouts,
+      viewport,
+    }).payload;
+
+    if (activeSubspace.groupId) {
+      await canvasApi.saveGroupCanvas(token, activeSubspace.groupId, nextPayload);
+    } else {
+      await canvasApi.saveCanvas(token, selectedSpaceId, nextPayload);
+    }
 
     appendLog(`Сущность создана из ${origin}: ${created.title}`);
-    await loadCanvas(token, selectedSpaceId, created.id);
+    await loadCanvas(token, selectedSpaceId, created.id, activeSubspace.groupId);
+  };
+
+  const commitPendingEntityDeletion = async (snapshot: PendingEntityDeletion) => {
+    const activeToken = tokenRef.current;
+    const isActiveSpace =
+      selectedSpaceIdRef.current === snapshot.entity.spaceId &&
+      selectedGroupIdRef.current === (snapshot.entity.groupId ?? null);
+
+    setPendingEntityDeletion((current) =>
+      current?.entity.id === snapshot.entity.id ? null : current,
+    );
+
+    if (!activeToken) {
+      if (isActiveSpace) {
+        applyLocalCanvasState(restoreDeletedEntity(liveCanvasStateRef.current, snapshot));
+      }
+      return;
+    }
+
+    if (isActiveSpace) {
+      setBusyLabel('Удаление записи');
+    }
+
+    try {
+      await canvasApi.deleteEntity(activeToken, snapshot.entity.id);
+      appendLog(`Запись удалена: ${snapshot.entity.id}`);
+    } catch (error) {
+      if (isActiveSpace) {
+        applyLocalCanvasState(restoreDeletedEntity(liveCanvasStateRef.current, snapshot));
+      }
+
+      const message = error instanceof Error ? error.message : 'Не удалось удалить запись';
+      appendLog(message);
+      setCanvasError(message);
+    } finally {
+      if (isActiveSpace) {
+        setBusyLabel(null);
+      }
+    }
+  };
+
+  const undoPendingEntityDeletion = () => {
+    if (!activePendingDeletion) {
+      return;
+    }
+
+    clearPendingEntityDeletionTimer();
+    applyLocalCanvasState(restoreDeletedEntity(liveCanvasStateRef.current, activePendingDeletion));
+    setPendingEntityDeletion(null);
+    appendLog(`Запись восстановлена: ${activePendingDeletion.entity.id}`);
   };
 
   useEffect(() => {
@@ -697,6 +870,8 @@ export function App() {
 
   useEffect(() => {
     if (!token || !selectedSpaceId) {
+      setGroups([]);
+      setSelectedGroupId(null);
       setDocumentDetail(null);
       setDocumentEditorDocumentId(null);
       setSpaceDocuments([]);
@@ -706,11 +881,22 @@ export function App() {
       return;
     }
 
+    void loadGroups(token, selectedSpaceId);
+  }, [selectedSpaceId, token]);
+
+  useEffect(() => {
+    if (!token || !selectedSpaceId) {
+      setSavedViews([]);
+      setActiveSavedViewId(null);
+      setTableLensDraft(createDefaultTableDraft(entityTypes));
+      return;
+    }
+
     setSavedViews([]);
     setActiveSavedViewId(null);
     setTableLensDraft((current) => createDefaultTableDraft(entityTypes, current.viewType));
-    void loadCanvas(token, selectedSpaceId);
-  }, [selectedSpaceId, token]);
+    void loadCanvas(token, selectedSpaceId, null, activeSubspace.groupId);
+  }, [activeSubspace.groupId, entityTypes, selectedSpaceId, token]);
 
   useEffect(() => {
     if (!activeSavedViewId) {
@@ -920,6 +1106,22 @@ export function App() {
       setSelectedSpaceId(space.id);
     });
 
+  const createGroup = () =>
+    withAction('Создание subspace-группы', async () => {
+      if (!token || !selectedSpaceId) {
+        return;
+      }
+
+      const group = await canvasApi.createGroup(token, selectedSpaceId, {
+        name: groupName,
+        slug: groupSlug,
+        description: groupDescription,
+      });
+      setGroups((current) => [group, ...current.filter((item) => item.id !== group.id)]);
+      setSelectedGroupId(group.id);
+      appendLog(`Группа создана: ${group.slug}`);
+    });
+
   const quickCreateCenteredEntity = () =>
     withAction('Создание сущности', async () => {
       await createEntityAtPosition(getCanvasCenterPosition(), 'панели');
@@ -958,7 +1160,9 @@ export function App() {
       throw new Error('Выбери пространство перед сохранением представления.');
     }
 
-    const created = await canvasApi.createSavedView(token, selectedSpaceId, payload);
+    const created = activeSubspace.groupId
+      ? await canvasApi.createGroupSavedView(token, activeSubspace.groupId, payload)
+      : await canvasApi.createSavedView(token, selectedSpaceId, payload);
     setSavedViews((current) => [created, ...current.filter((view) => view.id !== created.id)]);
     setActiveSavedViewId(created.id);
     setTableLensDraft(buildDraftFromSavedView(created, entityTypes));
@@ -1110,24 +1314,26 @@ export function App() {
       }
     });
 
-  const deleteSelectedEntity = () =>
-    withAction('Удаление записи', async () => {
-      if (!token || !selectedSpaceId || !selectedEntityId) {
-        return;
-      }
+  const deleteSelectedEntity = () => {
+    if (!token || !selectedSpaceId || !selectedEntityId || pendingEntityDeletion) {
+      return;
+    }
 
-      const entityId = selectedEntityId;
-      await canvasApi.deleteEntity(token, entityId);
-      appendLog(`Запись удалена: ${entityId}`);
+    const stagedDeletion = stageEntityDeletion(liveCanvasStateRef.current, selectedEntityId);
 
-      if (documentEditorEntityId === entityId) {
-        closeEntityDocument();
-      }
+    if (!stagedDeletion) {
+      return;
+    }
 
-      await loadCanvas(token, selectedSpaceId, null);
-      selectEntityOnCanvas(null);
-      setDocumentBacklinks([]);
-    });
+    clearPendingEntityDeletionTimer();
+    setPendingEntityDeletion(stagedDeletion.pendingDeletion);
+    applyLocalCanvasState(stagedDeletion.nextState);
+    appendLog(`Запись скрыта до подтверждения удаления: ${selectedEntityId}`);
+    pendingEntityDeletionTimerRef.current = window.setTimeout(() => {
+      pendingEntityDeletionTimerRef.current = null;
+      void commitPendingEntityDeletion(stagedDeletion.pendingDeletion);
+    }, ENTITY_DELETE_UNDO_WINDOW_MS);
+  };
 
   const openDocumentFromBacklink = async (documentId: string) => {
     if (!token) {
@@ -1249,8 +1455,60 @@ export function App() {
   }, [email]);
 
   useEffect(() => {
+    tokenRef.current = token;
+  }, [token]);
+
+  useEffect(() => {
+    selectedSpaceIdRef.current = selectedSpaceId;
+  }, [selectedSpaceId]);
+
+  useEffect(() => {
+    selectedGroupIdRef.current = activeSubspace.groupId;
+  }, [activeSubspace.groupId]);
+
+  useEffect(() => {
+    liveCanvasStateRef.current = {
+      spaceId: selectedSpaceId,
+      groupId: activeSubspace.groupId,
+      entityTypes,
+      entities,
+      relations,
+      nodes,
+      edgeLayouts,
+      viewport,
+      canvasUpdatedAt: canvasState?.updatedAt ?? null,
+      documents: spaceDocuments,
+      selectedEntityId,
+    };
+  }, [
+    canvasState,
+    edgeLayouts,
+    entities,
+    entityTypes,
+    nodes,
+    relations,
+    selectedEntityId,
+    selectedSpaceId,
+    spaceDocuments,
+    viewport,
+    activeSubspace.groupId,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      clearPendingEntityDeletionTimer();
+    };
+  }, []);
+
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Delete') {
+      const isDeleteShortcut = event.key === 'Delete';
+      const isUndoShortcut =
+        (event.ctrlKey || event.metaKey) &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === 'z';
+
+      if (!isDeleteShortcut && !isUndoShortcut) {
         return;
       }
 
@@ -1262,18 +1520,39 @@ export function App() {
         tagName === 'SELECT' ||
         target?.isContentEditable === true;
 
-      if (isEditable || documentEditorEntityId || !selectedEntityId || !token || !selectedSpaceId || busyLabel) {
+      if (isEditable) {
+        return;
+      }
+
+      if (isUndoShortcut) {
+        if (!activePendingDeletion || busyLabel) {
+          return;
+        }
+
+        event.preventDefault();
+        undoPendingEntityDeletion();
+        return;
+      }
+
+      if (
+        documentEditorEntityId ||
+        !selectedEntityId ||
+        !token ||
+        !selectedSpaceId ||
+        busyLabel ||
+        pendingEntityDeletion
+      ) {
         return;
       }
 
       event.preventDefault();
-      void deleteSelectedEntity();
+      deleteSelectedEntity();
     };
 
     window.addEventListener('keydown', handleKeyDown);
 
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [busyLabel, documentEditorEntityId, selectedEntityId, selectedSpaceId, token]);
+  }, [activePendingDeletion, busyLabel, documentEditorEntityId, pendingEntityDeletion, selectedEntityId, selectedSpaceId, token]);
 
   const updateDetailDraft = (patch: Partial<EntityDetailDraft>) => {
     setEntityDetailDraft((current) => (current ? { ...current, ...patch } : current));
@@ -1881,12 +2160,79 @@ export function App() {
                 ))}
               </select>
             </label>
+            {selectedSpaceId ? (
+              <>
+                <label className="field">
+                  <span>Текущий subspace</span>
+                  <select
+                    value={selectedGroupId ?? ''}
+                    onChange={(event) => setSelectedGroupId(event.target.value || null)}
+                  >
+                    <option value="">Корневой контекст пространства</option>
+                    {groups.map((group) => (
+                      <option key={group.id} value={group.id}>
+                        {group.name} ({group.slug})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <p className="panel__hint">
+                  {selectedGroup
+                    ? `Сейчас открыт локальный контекст "${selectedGroup.name}". Внутри него канва, документы и saved views изолированы от корня space.`
+                    : 'Сейчас открыт корневой контекст пространства. Выбери group, чтобы провалиться во внутренний subspace.'}
+                </p>
+                <label className="field">
+                  <span>Название group</span>
+                  <input type="text" value={groupName} onChange={(event) => setGroupName(event.target.value)} />
+                </label>
+                <label className="field">
+                  <span>Слаг group</span>
+                  <input
+                    type="text"
+                    value={groupSlug}
+                    onChange={(event) => setGroupSlug(event.target.value.toLowerCase())}
+                  />
+                </label>
+                <label className="field">
+                  <span>Описание group</span>
+                  <textarea
+                    rows={3}
+                    value={groupDescription}
+                    onChange={(event) => setGroupDescription(event.target.value)}
+                  />
+                </label>
+                <div className="actions">
+                  <button
+                    type="button"
+                    className="button"
+                    disabled={!token || !selectedSpaceId || !!busyLabel}
+                    onClick={createGroup}
+                  >
+                    Создать group
+                  </button>
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    disabled={!selectedGroupId || !!busyLabel}
+                    onClick={() => setSelectedGroupId(null)}
+                  >
+                    Выйти в space
+                  </button>
+                </div>
+              </>
+            ) : null}
           </section>
 
           <section className="panel">
             <div className="panel__header">
               <h2>Действия канвы</h2>
-              <span>{canvasState?.updatedAt ? 'сохранено' : 'вид по умолчанию'}</span>
+              <span>
+                {selectedGroup
+                  ? `group: ${selectedGroup.slug}`
+                  : canvasState?.updatedAt
+                    ? 'сохранено'
+                    : 'вид по умолчанию'}
+              </span>
             </div>
             <label className="field">
               <span>Быстрый заголовок сущности</span>
@@ -1908,10 +2254,31 @@ export function App() {
               <button type="button" className="button" disabled={!token || !selectedSpaceId || !!busyLabel} onClick={quickCreateCenteredEntity}>
                 Добавить в центр
               </button>
-              <button type="button" className="button button--ghost" disabled={!token || !selectedSpaceId || !!busyLabel || !layoutDirty} onClick={() => void withAction('Сохранение макета', () => persistLayout('ручное сохранение'))}>
+              <button
+                type="button"
+                className="button button--ghost"
+                disabled={!token || !selectedSpaceId || !!busyLabel || !layoutDirty || !!activePendingDeletion}
+                onClick={() => void withAction('Сохранение макета', () => persistLayout('ручное сохранение'))}
+              >
                 Сохранить макет
               </button>
             </div>
+            {activePendingDeletion ? (
+              <>
+                <p className="panel__hint">
+                  Запись "{activePendingDeletion.entity.title}" удалена локально. Нажми Ctrl+Z,
+                  чтобы вернуть её до окончательного удаления.
+                </p>
+                <button
+                  type="button"
+                  className="button button--ghost button--full"
+                  disabled={!!busyLabel}
+                  onClick={undoPendingEntityDeletion}
+                >
+                  Вернуть запись (Ctrl+Z)
+                </button>
+              </>
+            ) : null}
             <p className="panel__hint">
               Создавай сущность кнопкой в этой панели. Двойной клик по ноде открывает документ на весь экран.
               Ссылки вставляются через список сущностей и кнопку вставки ссылки в редакторе, а связи появляются после
@@ -2086,7 +2453,7 @@ export function App() {
               <button
                 type="button"
                 className="button button--ghost"
-                disabled={!token || !selectedSpaceId || !!busyLabel}
+                disabled={!token || !selectedSpaceId || !!busyLabel || !!activePendingDeletion}
                 onClick={() => token && selectedSpaceId && void withAction('Обновление канвы', () => loadCanvas(token, selectedSpaceId))}
               >
                 Обновить канву

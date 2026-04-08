@@ -1,16 +1,28 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
-import { saveCanvasStateRequestSchema, spaceIdParamsSchema } from '@ryba/schemas';
+import {
+  groupIdParamsSchema,
+  saveCanvasStateRequestSchema,
+  spaceIdParamsSchema,
+} from '@ryba/schemas';
 import type { CanvasNodeLayout, CanvasStateRecord } from '@ryba/types';
 
 import { ApiException } from '../common/api-exception';
 import { DatabaseService } from '../database.service';
 import { toCanvasStateRecord } from '../db/mappers';
-import { entities, relations, spaceCanvasStates, spaces } from '../db/schema';
+import {
+  entities,
+  groupCanvasStates,
+  relations,
+  spaceCanvasStates,
+  spaces,
+} from '../db/schema';
+import { GroupsService } from '../groups/groups.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 
 type SpaceIdParams = z.infer<typeof spaceIdParamsSchema>;
+type GroupIdParams = z.infer<typeof groupIdParamsSchema>;
 type SaveCanvasStateRequest = z.infer<typeof saveCanvasStateRequestSchema>;
 type EntityRow = typeof entities.$inferSelect;
 type RelationRow = typeof relations.$inferSelect;
@@ -20,6 +32,8 @@ export class CanvasService {
   constructor(
     @Inject(DatabaseService)
     private readonly databaseService: DatabaseService,
+    @Inject(GroupsService)
+    private readonly groupsService: GroupsService,
     @Inject(WorkspacesService)
     private readonly workspacesService: WorkspacesService,
   ) {}
@@ -28,30 +42,26 @@ export class CanvasService {
     userId: string,
     params: SpaceIdParams,
   ): Promise<CanvasStateRecord> {
-    const db = this.getDb();
     const space = await this.requireSpaceAccess(userId, params.spaceId);
-    const [spaceEntities, spaceRelations, state] = await Promise.all([
-      db
-        .select()
-        .from(entities)
-        .where(and(eq(entities.workspaceId, space.workspaceId), eq(entities.spaceId, space.id)))
-        .orderBy(asc(entities.createdAt)),
-      db
-        .select()
-        .from(relations)
-        .where(and(eq(relations.workspaceId, space.workspaceId), eq(relations.spaceId, space.id)))
-        .orderBy(asc(relations.createdAt)),
-      db.query.spaceCanvasStates.findFirst({
-        where: eq(spaceCanvasStates.spaceId, space.id),
-      }),
-    ]);
 
-    return this.resolveCanvasState(
-      space.id,
-      spaceEntities,
-      spaceRelations,
-      state ? toCanvasStateRecord(state) : null,
-    );
+    return this.getCanvasStateInScope(userId, {
+      workspaceId: space.workspaceId,
+      spaceId: space.id,
+      groupId: null,
+    });
+  }
+
+  async getGroupCanvasState(
+    userId: string,
+    params: GroupIdParams,
+  ): Promise<CanvasStateRecord> {
+    const group = await this.groupsService.requireGroupAccess(userId, params.groupId);
+
+    return this.getCanvasStateInScope(userId, {
+      workspaceId: group.workspaceId,
+      spaceId: group.spaceId,
+      groupId: group.id,
+    });
   }
 
   async saveCanvasState(
@@ -59,61 +69,34 @@ export class CanvasService {
     params: SpaceIdParams,
     payload: SaveCanvasStateRequest,
   ): Promise<CanvasStateRecord> {
-    const db = this.getDb();
     const space = await this.requireSpaceAccess(userId, params.spaceId);
-    const [spaceEntities, spaceRelations] = await Promise.all([
-      db
-        .select()
-        .from(entities)
-        .where(and(eq(entities.workspaceId, space.workspaceId), eq(entities.spaceId, space.id)))
-        .orderBy(asc(entities.createdAt)),
-      db
-        .select()
-        .from(relations)
-        .where(and(eq(relations.workspaceId, space.workspaceId), eq(relations.spaceId, space.id)))
-        .orderBy(asc(relations.createdAt)),
-    ]);
 
-    this.validateLayout(payload, spaceEntities, spaceRelations);
-
-    const now = new Date().toISOString();
-
-    await db.transaction(async (tx) => {
-      const existing = await tx.query.spaceCanvasStates.findFirst({
-        where: eq(spaceCanvasStates.spaceId, space.id),
-      });
-
-      if (existing) {
-        await tx
-          .update(spaceCanvasStates)
-          .set({
-            layout: payload,
-            updatedByUserId: userId,
-            updatedAt: now,
-          })
-          .where(eq(spaceCanvasStates.spaceId, space.id));
-        return;
-      }
-
-      await tx.insert(spaceCanvasStates).values({
+    return this.saveCanvasStateInScope(
+      userId,
+      {
+        workspaceId: space.workspaceId,
         spaceId: space.id,
-        layout: payload,
-        createdByUserId: userId,
-        updatedByUserId: userId,
-        createdAt: now,
-        updatedAt: now,
-      });
-    });
+        groupId: null,
+      },
+      payload,
+    );
+  }
 
-    const state = await db.query.spaceCanvasStates.findFirst({
-      where: eq(spaceCanvasStates.spaceId, space.id),
-    });
+  async saveGroupCanvasState(
+    userId: string,
+    params: GroupIdParams,
+    payload: SaveCanvasStateRequest,
+  ): Promise<CanvasStateRecord> {
+    const group = await this.groupsService.requireGroupAccess(userId, params.groupId);
 
-    return this.resolveCanvasState(
-      space.id,
-      spaceEntities,
-      spaceRelations,
-      state ? toCanvasStateRecord(state) : null,
+    return this.saveCanvasStateInScope(
+      userId,
+      {
+        workspaceId: group.workspaceId,
+        spaceId: group.spaceId,
+        groupId: group.id,
+      },
+      payload,
     );
   }
 
@@ -161,6 +144,7 @@ export class CanvasService {
 
   private resolveCanvasState(
     spaceId: string,
+    groupId: string | null,
     spaceEntities: EntityRow[],
     spaceRelations: RelationRow[],
     persisted: CanvasStateRecord | null,
@@ -174,6 +158,7 @@ export class CanvasService {
 
     return {
       spaceId,
+      groupId,
       nodes: spaceEntities.map((entity, index) => {
         return persistedNodes.get(entity.id) ?? this.createDefaultNode(entity.id, index);
       }),
@@ -196,6 +181,155 @@ export class CanvasService {
       },
       updatedAt: persisted?.updatedAt ?? null,
     };
+  }
+
+  private async getCanvasStateInScope(
+    userId: string,
+    scope: {
+      workspaceId: string;
+      spaceId: string;
+      groupId: string | null;
+    },
+  ): Promise<CanvasStateRecord> {
+    const db = this.getDb();
+    await this.workspacesService.requireMembership(userId, scope.workspaceId);
+    const [scopeEntities, scopeRelations, state] = await Promise.all([
+      db
+        .select()
+        .from(entities)
+        .where(
+          and(
+            eq(entities.workspaceId, scope.workspaceId),
+            eq(entities.spaceId, scope.spaceId),
+            scope.groupId ? eq(entities.groupId, scope.groupId) : isNull(entities.groupId),
+          ),
+        )
+        .orderBy(asc(entities.createdAt)),
+      db
+        .select()
+        .from(relations)
+        .where(
+          and(
+            eq(relations.workspaceId, scope.workspaceId),
+            eq(relations.spaceId, scope.spaceId),
+            scope.groupId ? eq(relations.groupId, scope.groupId) : isNull(relations.groupId),
+          ),
+        )
+        .orderBy(asc(relations.createdAt)),
+      scope.groupId
+        ? db.query.groupCanvasStates.findFirst({
+            where: eq(groupCanvasStates.groupId, scope.groupId),
+          })
+        : db.query.spaceCanvasStates.findFirst({
+            where: eq(spaceCanvasStates.spaceId, scope.spaceId),
+          }),
+    ]);
+
+    return this.resolveCanvasState(
+      scope.spaceId,
+      scope.groupId,
+      scopeEntities,
+      scopeRelations,
+      state ? toCanvasStateRecord(state, scope) : null,
+    );
+  }
+
+  private async saveCanvasStateInScope(
+    userId: string,
+    scope: {
+      workspaceId: string;
+      spaceId: string;
+      groupId: string | null;
+    },
+    payload: SaveCanvasStateRequest,
+  ): Promise<CanvasStateRecord> {
+    const db = this.getDb();
+    await this.workspacesService.requireMembership(userId, scope.workspaceId);
+    const [scopeEntities, scopeRelations] = await Promise.all([
+      db
+        .select()
+        .from(entities)
+        .where(
+          and(
+            eq(entities.workspaceId, scope.workspaceId),
+            eq(entities.spaceId, scope.spaceId),
+            scope.groupId ? eq(entities.groupId, scope.groupId) : isNull(entities.groupId),
+          ),
+        )
+        .orderBy(asc(entities.createdAt)),
+      db
+        .select()
+        .from(relations)
+        .where(
+          and(
+            eq(relations.workspaceId, scope.workspaceId),
+            eq(relations.spaceId, scope.spaceId),
+            scope.groupId ? eq(relations.groupId, scope.groupId) : isNull(relations.groupId),
+          ),
+        )
+        .orderBy(asc(relations.createdAt)),
+    ]);
+
+    this.validateLayout(payload, scopeEntities, scopeRelations);
+
+    const now = new Date().toISOString();
+
+    await db.transaction(async (tx) => {
+      if (scope.groupId) {
+        const existing = await tx.query.groupCanvasStates.findFirst({
+          where: eq(groupCanvasStates.groupId, scope.groupId!),
+        });
+
+        if (existing) {
+          await tx
+            .update(groupCanvasStates)
+            .set({
+              layout: payload,
+              updatedByUserId: userId,
+              updatedAt: now,
+            })
+            .where(eq(groupCanvasStates.groupId, scope.groupId));
+          return;
+        }
+
+        await tx.insert(groupCanvasStates).values({
+          groupId: scope.groupId,
+          layout: payload,
+          createdByUserId: userId,
+          updatedByUserId: userId,
+          createdAt: now,
+          updatedAt: now,
+        });
+        return;
+      }
+
+      const existing = await tx.query.spaceCanvasStates.findFirst({
+        where: eq(spaceCanvasStates.spaceId, scope.spaceId),
+      });
+
+      if (existing) {
+        await tx
+          .update(spaceCanvasStates)
+          .set({
+            layout: payload,
+            updatedByUserId: userId,
+            updatedAt: now,
+          })
+          .where(eq(spaceCanvasStates.spaceId, scope.spaceId));
+        return;
+      }
+
+      await tx.insert(spaceCanvasStates).values({
+        spaceId: scope.spaceId,
+        layout: payload,
+        createdByUserId: userId,
+        updatedByUserId: userId,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+
+    return this.getCanvasStateInScope(userId, scope);
   }
 
   private createDefaultNode(entityId: string, index: number): CanvasNodeLayout {

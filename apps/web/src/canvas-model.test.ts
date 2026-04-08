@@ -11,6 +11,7 @@ describe('canvas-model', () => {
           id: 'entity-a',
           workspaceId: 'workspace-1',
           spaceId: 'space-1',
+          groupId: null,
           entityTypeId: 'type-company',
           title: 'Alpha',
           summary: 'First',
@@ -24,6 +25,7 @@ describe('canvas-model', () => {
           id: 'entity-b',
           workspaceId: 'workspace-1',
           spaceId: 'space-1',
+          groupId: null,
           entityTypeId: null,
           title: 'Beta',
           summary: null,
@@ -54,6 +56,7 @@ describe('canvas-model', () => {
           id: 'relation-1',
           workspaceId: 'workspace-1',
           spaceId: 'space-1',
+          groupId: null,
           fromEntityId: 'entity-a',
           toEntityId: 'entity-b',
           relationType: 'depends_on',
@@ -66,6 +69,7 @@ describe('canvas-model', () => {
       ],
       canvas: {
         spaceId: 'space-1',
+        groupId: null,
         nodes: [
           {
             entityId: 'entity-a',
@@ -114,6 +118,7 @@ describe('canvas-model', () => {
           id: 'entity-a',
           workspaceId: 'workspace-1',
           spaceId: 'space-1',
+          groupId: null,
           entityTypeId: null,
           title: 'Alpha',
           summary: 'First',
@@ -127,6 +132,7 @@ describe('canvas-model', () => {
           id: 'entity-b',
           workspaceId: 'workspace-1',
           spaceId: 'space-1',
+          groupId: null,
           entityTypeId: null,
           title: 'Beta',
           summary: null,
@@ -143,6 +149,7 @@ describe('canvas-model', () => {
           id: 'relation-doc',
           workspaceId: 'workspace-1',
           spaceId: 'space-1',
+          groupId: null,
           fromEntityId: 'entity-a',
           toEntityId: 'entity-b',
           relationType: 'document_link',
@@ -155,6 +162,7 @@ describe('canvas-model', () => {
       ],
       canvas: {
         spaceId: 'space-1',
+        groupId: null,
         nodes: [
           {
             entityId: 'entity-a',
@@ -203,6 +211,7 @@ describe('canvas-model', () => {
           id: 'entity-a',
           workspaceId: 'workspace-1',
           spaceId: 'space-1',
+          groupId: null,
           entityTypeId: null,
           title: 'Alpha',
           summary: 'First',
@@ -216,6 +225,7 @@ describe('canvas-model', () => {
           id: 'entity-b',
           workspaceId: 'workspace-1',
           spaceId: 'space-1',
+          groupId: null,
           entityTypeId: null,
           title: 'Beta',
           summary: null,
@@ -232,6 +242,7 @@ describe('canvas-model', () => {
           id: 'relation-doc-sync',
           workspaceId: 'workspace-1',
           spaceId: 'space-1',
+          groupId: null,
           fromEntityId: 'entity-a',
           toEntityId: 'entity-b',
           relationType: 'document_link',
@@ -246,6 +257,7 @@ describe('canvas-model', () => {
       ],
       canvas: {
         spaceId: 'space-1',
+        groupId: null,
         nodes: [
           {
             entityId: 'entity-a',

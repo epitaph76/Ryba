@@ -15,6 +15,7 @@ const baseDetail: DocumentDetailRecord = {
     id: 'doc-1',
     workspaceId: 'workspace-1',
     spaceId: 'space-1',
+    groupId: null,
     entityId: 'ent-1',
     title: 'Launch plan',
     body: [

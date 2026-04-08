@@ -43,6 +43,13 @@
       "when": 1775505697859,
       "tag": "0005_stormy_master_chief",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1775675043557,
+      "tag": "0006_outgoing_captain_marvel",
+      "breakpoints": true
     }
   ]
 }

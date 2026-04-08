@@ -13,6 +13,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { z } from 'zod';
 import {
   createSavedViewRequestSchema,
+  groupIdParamsSchema,
   listSavedViewsResponseSchema,
   savedViewIdParamsSchema,
   spaceIdParamsSchema,
@@ -28,6 +29,7 @@ import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { ViewsService } from './views.service';
 
 type SpaceIdParams = z.infer<typeof spaceIdParamsSchema>;
+type GroupIdParams = z.infer<typeof groupIdParamsSchema>;
 type SavedViewIdParams = z.infer<typeof savedViewIdParamsSchema>;
 type CreateSavedViewRequest = z.infer<typeof createSavedViewRequestSchema>;
 type UpdateSavedViewRequest = z.infer<typeof updateSavedViewRequestSchema>;
@@ -53,6 +55,19 @@ export class ViewsController {
     });
   }
 
+  @Get('groups/:groupId/saved-views')
+  async listGroupSavedViews(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param(new ZodValidationPipe(groupIdParamsSchema))
+    params: GroupIdParams,
+  ): Promise<ApiEnvelope<ListSavedViewsResponse>> {
+    const items = await this.viewsService.listGroupSavedViews(user.userId, params);
+
+    return envelope({
+      items,
+    });
+  }
+
   @Post('spaces/:spaceId/saved-views')
   async createSavedView(
     @CurrentUser() user: AuthenticatedUser,
@@ -62,6 +77,19 @@ export class ViewsController {
     payload: CreateSavedViewRequest,
   ): Promise<ApiEnvelope<SavedViewRecord>> {
     const view = await this.viewsService.createSavedView(user.userId, params, payload);
+
+    return envelope(view);
+  }
+
+  @Post('groups/:groupId/saved-views')
+  async createGroupSavedView(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param(new ZodValidationPipe(groupIdParamsSchema))
+    params: GroupIdParams,
+    @Body(new ZodValidationPipe(createSavedViewRequestSchema))
+    payload: CreateSavedViewRequest,
+  ): Promise<ApiEnvelope<SavedViewRecord>> {
+    const view = await this.viewsService.createGroupSavedView(user.userId, params, payload);
 
     return envelope(view);
   }
