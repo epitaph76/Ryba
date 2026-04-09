@@ -632,6 +632,11 @@ export const documentBacklinkRecordSchema = z.object({
   sourceGroupSlug: slugSchema.nullable(),
 });
 
+export const documentCollaborationSessionRecordSchema = z.object({
+  documentId: idSchema,
+  canEdit: z.boolean(),
+});
+
 export const createDocumentRequestSchema = z.object({
   title: z.string().trim().min(1).max(200),
   body: z.array(documentBlockSchema).default([]),

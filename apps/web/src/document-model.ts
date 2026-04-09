@@ -144,6 +144,13 @@ export const serializeEditorDocument = (
 
 export const createDocumentBlocksFromEditorJson = serializeEditorDocument;
 
+export const hasRenderableDocumentBlocks = (blocks: DocumentBlock[]) =>
+  blocks.some(
+    (block) =>
+      (typeof block.text === 'string' && hasRenderableContent(block.text)) ||
+      block.entityReferences.length > 0,
+  );
+
 export const normalizeDocumentBlocks = (
   blocks: DocumentBlock[],
   context: DocumentSerializationContext = {},

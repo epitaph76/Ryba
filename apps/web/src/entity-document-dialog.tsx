@@ -6,7 +6,10 @@ import type {
   EntityRecord,
 } from '@ryba/types';
 
-import { DocumentComposer } from './document-composer';
+import {
+  DocumentComposer,
+  type DocumentComposerCollaborationConfig,
+} from './document-composer';
 import type { DocumentDraft } from './document-model';
 
 interface EntityDocumentDialogProps {
@@ -21,6 +24,7 @@ interface EntityDocumentDialogProps {
   loading: boolean;
   saving: boolean;
   busy: boolean;
+  collaboration?: Omit<DocumentComposerCollaborationConfig, 'documentId'> | null;
   onClose: () => void;
   onSave: () => void;
   onOpenEntity: (entityId: string, groupId: string | null) => void;
@@ -40,6 +44,7 @@ export function EntityDocumentDialog({
   loading,
   saving,
   busy,
+  collaboration = null,
   onClose,
   onSave,
   onOpenEntity,
@@ -111,6 +116,14 @@ export function EntityDocumentDialog({
                 entities={entities.filter((item) => item.id !== entity.id)}
                 linkDefinitions={linkDefinitions}
                 disabled={busy || saving}
+                collaboration={
+                  currentDocumentId && collaboration
+                    ? {
+                        ...collaboration,
+                        documentId: currentDocumentId,
+                      }
+                    : null
+                }
                 onTitleChange={(title) => onDraftChange({ ...draft, title })}
                 onBodyChange={(body) => onDraftChange({ ...draft, body })}
               />

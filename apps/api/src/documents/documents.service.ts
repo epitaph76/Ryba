@@ -28,6 +28,7 @@ import {
 import type {
   DocumentBacklinkRecord,
   DocumentBlock,
+  DocumentCollaborationSessionRecord,
   DocumentDetailRecord,
   DocumentEntityPreview,
   DocumentEntityReference,
@@ -145,6 +146,29 @@ export class DocumentsService {
     const document = await this.requireDocumentAccess(userId, params.documentId, 'read');
 
     return this.buildDocumentDetail(document);
+  }
+
+  async getDocumentCollaboration(
+    userId: string,
+    params: DocumentIdParams,
+  ): Promise<DocumentCollaborationSessionRecord> {
+    const document = await this.requireDocumentAccess(userId, params.documentId, 'read');
+    let canEdit = true;
+
+    try {
+      await this.workspacesService.requirePermission(userId, document.workspaceId, 'edit');
+    } catch (error) {
+      if (!(error instanceof ApiException) || error.getStatus() !== HttpStatus.FORBIDDEN) {
+        throw error;
+      }
+
+      canEdit = false;
+    }
+
+    return {
+      documentId: document.id,
+      canEdit,
+    };
   }
 
   async getDocumentForEntity(userId: string, params: EntityIdParams): Promise<DocumentDetailRecord> {

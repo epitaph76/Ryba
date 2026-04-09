@@ -93,6 +93,7 @@ import {
 const TOKEN_STORAGE_KEY = 'ryba_s3_access_token';
 const LAST_EMAIL_STORAGE_KEY = 'ryba_last_email';
 const ENTITY_DELETE_UNDO_WINDOW_MS = 8000;
+const DEFAULT_COLLABORATION_URL = 'ws://localhost:1234';
 function EntityCardNode({ data, selected }: NodeProps<CanvasEntityNodeData>) {
   return (
     <article className={`canvas-node${selected ? ' is-selected' : ''}`}>
@@ -289,6 +290,17 @@ export function App() {
   const currentWorkspaceMember =
     currentUser ? workspaceMembers.find((member) => member.userId === currentUser.id) ?? null : null;
   const currentWorkspaceRole = currentWorkspaceMember?.role ?? null;
+  const documentCollaborationConfig = useMemo(
+    () =>
+      token && currentUser
+        ? {
+            token,
+            websocketUrl: import.meta.env.VITE_COLLAB_URL ?? DEFAULT_COLLABORATION_URL,
+            currentUser,
+          }
+        : null,
+    [currentUser, token],
+  );
   const workspaceCapabilities = getWorkspaceCapabilities(currentWorkspaceRole);
   const canReadSelectedWorkspace = workspaceCapabilities.canRead;
   const canEditSelectedWorkspace = workspaceCapabilities.canEdit;
@@ -3055,6 +3067,7 @@ export function App() {
         loading={documentLoading}
         saving={documentSaveBusy}
         busy={!token || !selectedSpaceId || !!busyLabel || !canEditSelectedWorkspace}
+        collaboration={documentCollaborationConfig}
         onClose={closeEntityDocumentWithAutosave}
         onSave={() => void saveEntityDocument()}
         onOpenEntity={(entityId, groupId) => {

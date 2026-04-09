@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { z } from 'zod';
 import {
   createDocumentRequestSchema,
+  documentCollaborationSessionRecordSchema,
   documentDetailRecordSchema,
   documentIdParamsSchema,
   entityIdParamsSchema,
@@ -16,6 +17,7 @@ import {
 import type {
   ApiEnvelope,
   DocumentBacklinkRecord,
+  DocumentCollaborationSessionRecord,
   DocumentDetailRecord,
   DocumentRecord,
 } from '@ryba/types';
@@ -111,6 +113,18 @@ export class DocumentsController {
     documentDetailRecordSchema.parse(detail);
 
     return envelope(detail);
+  }
+
+  @Get('documents/:documentId/collaboration')
+  async getDocumentCollaboration(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param(new ZodValidationPipe(documentIdParamsSchema))
+    params: DocumentIdParams,
+  ): Promise<ApiEnvelope<DocumentCollaborationSessionRecord>> {
+    const session = await this.documentsService.getDocumentCollaboration(user.userId, params);
+    documentCollaborationSessionRecordSchema.parse(session);
+
+    return envelope(session);
   }
 
   @Get('entities/:entityId/document')

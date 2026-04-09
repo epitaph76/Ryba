@@ -7,6 +7,7 @@ import {
   buildEditorHtmlFromBlocks,
   createMentionToken,
   extractDocumentMentions,
+  hasRenderableDocumentBlocks,
   serializeEditorDocument,
 } from './document-model';
 
@@ -216,6 +217,29 @@ describe('document-model', () => {
     expect(buildDocumentPreviewText(blocks)).toContain('Launch task');
     expect(buildDocumentPreviewText(blocks)).toContain('Static copy');
     expect(buildDocumentPreviewText(blocks)).toContain('Synced copy');
+  });
+
+  it('treats empty placeholder paragraphs as non-renderable body content', () => {
+    expect(
+      hasRenderableDocumentBlocks([
+        {
+          id: 'block-1',
+          kind: 'paragraph',
+          text: null,
+          entityReferences: [],
+        },
+      ]),
+    ).toBe(false);
+    expect(
+      hasRenderableDocumentBlocks([
+        {
+          id: 'block-1',
+          kind: 'paragraph',
+          text: 'Seed body',
+          entityReferences: [],
+        },
+      ]),
+    ).toBe(true);
   });
 
   it('resolves qualified keys from another subspace without creating a local definition', () => {

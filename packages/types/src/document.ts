@@ -77,3 +77,8 @@ export interface DocumentBacklinkRecord {
   sourceGroupId: GroupId | null;
   sourceGroupSlug: string | null;
 }
+
+export interface DocumentCollaborationSessionRecord {
+  documentId: DocumentId;
+  canEdit: boolean;
+}

@@ -1,15 +1,37 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { HocuspocusProvider, WebSocketStatus, type StatesArray } from '@hocuspocus/provider';
+import Collaboration from '@tiptap/extension-collaboration';
 import Placeholder from '@tiptap/extension-placeholder';
-import StarterKit from '@tiptap/starter-kit';
 import { EditorContent, useEditor } from '@tiptap/react';
-import type { DocumentBlock, DocumentLinkDefinition, EntityRecord } from '@ryba/types';
+import StarterKit from '@tiptap/starter-kit';
+import type { DocumentBlock, DocumentLinkDefinition, EntityRecord, UserRecord } from '@ryba/types';
+import * as Y from 'yjs';
 
+import {
+  buildCollaborationServerUrl,
+  createCollaborationIdentity,
+  extractCollaborationPresence,
+  formatCollaborationStatus,
+  isPrimaryCollaborationSeedClient,
+  shouldDeferInitialEmptyCollaborationBody,
+  shouldDeferInitialEmptyCollaborationTitle,
+  type CollaborationPresenceItem,
+  type DocumentCollaborationStatus,
+} from './document-collaboration';
 import { createDocumentLinkHighlightExtension } from './document-link-highlight-extension';
 import {
   buildEditorHtmlFromBlocks,
   buildEntityMentionToken,
   createDocumentBlocksFromEditorJson,
+  hasRenderableDocumentBlocks,
 } from './document-model';
+
+export interface DocumentComposerCollaborationConfig {
+  documentId: string;
+  token: string;
+  websocketUrl: string;
+  currentUser: Pick<UserRecord, 'id' | 'email' | 'displayName'>;
+}
 
 interface DocumentComposerProps {
   currentDocumentId: string | null;
@@ -19,6 +41,7 @@ interface DocumentComposerProps {
   entities: EntityRecord[];
   linkDefinitions: DocumentLinkDefinition[];
   disabled?: boolean;
+  collaboration?: DocumentComposerCollaborationConfig | null;
   onTitleChange: (value: string) => void;
   onBodyChange: (value: DocumentBlock[]) => void;
 }
@@ -31,16 +54,42 @@ export function DocumentComposer({
   entities,
   linkDefinitions,
   disabled = false,
+  collaboration = null,
   onTitleChange,
   onBodyChange,
 }: DocumentComposerProps) {
   const [mentionEntityId, setMentionEntityId] = useState('');
+  const [collaborationStatus, setCollaborationStatus] =
+    useState<DocumentCollaborationStatus>('disabled');
+  const [collaborationPeers, setCollaborationPeers] = useState<CollaborationPresenceItem[]>([]);
+  const [collaborationError, setCollaborationError] = useState<string | null>(null);
+  const [collaborationReadOnly, setCollaborationReadOnly] = useState(false);
   const latestSerializationContextRef = useRef({
     currentDocumentId,
     ownerEntityId,
     linkDefinitions,
   });
   const latestOnBodyChangeRef = useRef(onBodyChange);
+  const latestOnTitleChangeRef = useRef(onTitleChange);
+  const latestBodyRef = useRef(body);
+  const latestTitleRef = useRef(title);
+  const seededCollaborationDocumentIdRef = useRef<string | null>(null);
+  const collaborationAwarenessStatesRef = useRef<StatesArray>([]);
+  const [collaborationAwarenessRevision, setCollaborationAwarenessRevision] = useState(0);
+  const [collaborationAwarenessStableRevision, setCollaborationAwarenessStableRevision] =
+    useState(0);
+  const collaborationUser = useMemo(
+    () => (collaboration ? createCollaborationIdentity(collaboration.currentUser) : null),
+    [
+      collaboration?.currentUser.displayName,
+      collaboration?.currentUser.email,
+      collaboration?.currentUser.id,
+    ],
+  );
+  const collaborationUrl = useMemo(
+    () => buildCollaborationServerUrl(collaboration?.websocketUrl),
+    [collaboration?.websocketUrl],
+  );
   const linkHighlightExtension = useMemo(
     () =>
       createDocumentLinkHighlightExtension({
@@ -55,6 +104,87 @@ export function DocumentComposer({
       }),
     [],
   );
+  const collaborationSession = useMemo(() => {
+    if (!collaboration || !collaborationUrl) {
+      return null;
+    }
+
+    const document = new Y.Doc();
+    const provider = new HocuspocusProvider({
+      url: collaborationUrl,
+      name: collaboration.documentId,
+      document,
+      token: collaboration.token,
+      onAuthenticated: ({ scope }) => {
+        setCollaborationReadOnly(scope === 'readonly');
+        setCollaborationError(null);
+      },
+      onAuthenticationFailed: ({ reason }) => {
+        setCollaborationStatus('error');
+        setCollaborationError(reason);
+      },
+      onConnect: () => {
+        setCollaborationError(null);
+      },
+      onStatus: ({ status }) => {
+        setCollaborationStatus(mapCollaborationStatus(status));
+      },
+      onSynced: ({ state }) => {
+        setCollaborationStatus(state ? 'synced' : 'connected');
+      },
+      onDisconnect: () => {
+        setCollaborationStatus('disconnected');
+      },
+      onClose: () => {
+        setCollaborationStatus('disconnected');
+      },
+      onAwarenessChange: ({ states }) => {
+        collaborationAwarenessStatesRef.current = states;
+        setCollaborationAwarenessRevision((current) => current + 1);
+        setCollaborationPeers(
+          collaborationUser
+            ? extractCollaborationPresence(states, collaborationUser.id)
+            : [],
+        );
+      },
+    });
+
+    return {
+      document,
+      provider,
+      titleText: document.getText('title'),
+      fragment: document.getXmlFragment('content'),
+    };
+  }, [
+    collaboration?.documentId,
+    collaboration?.token,
+    collaborationUrl,
+    collaborationUser?.color,
+    collaborationUser?.email,
+    collaborationUser?.id,
+    collaborationUser?.name,
+  ]);
+  const collaborationEnabled = !!collaborationSession;
+  const effectiveDisabled = disabled || collaborationReadOnly;
+  const extensions = useMemo(
+    () => [
+      collaborationSession ? StarterKit.configure({ history: false }) : StarterKit,
+      ...(collaborationSession
+        ? [
+            Collaboration.configure({
+              document: collaborationSession.document,
+              field: 'content',
+            }),
+          ]
+        : []),
+      linkHighlightExtension,
+      Placeholder.configure({
+        placeholder:
+          'РЎРѕР±РµСЂРё РґРѕРєСѓРјРµРЅС‚ РІРѕРєСЂСѓРі РґР°РЅРЅС‹С…: С„РёРєСЃРёСЂСѓР№ С‚РµРєСЃС‚ РєР°Рє РѕР±С‹С‡РЅРѕ, Р° РґР»СЏ СЃСЃС‹Р»РѕРє РёСЃРїРѕР»СЊР·СѓР№ link_name, link_name**С‚РµРєСЃС‚** РёР»Рё link_name$$С‚РµРєСЃС‚$$.',
+      }),
+    ],
+    [collaborationSession, linkHighlightExtension],
+  );
 
   useEffect(() => {
     latestSerializationContextRef.current = {
@@ -68,43 +198,129 @@ export function DocumentComposer({
     latestOnBodyChangeRef.current = onBodyChange;
   }, [onBodyChange]);
 
-  const editor = useEditor({
-    extensions: [
-      StarterKit,
-      linkHighlightExtension,
-      Placeholder.configure({
-        placeholder:
-          'Собери документ вокруг данных: фиксируй текст как обычно, а для ссылок используй link_name, link_name**текст** или link_name$$текст$$.',
-      }),
-    ],
-    content: buildEditorHtmlFromBlocks(body),
-    editorProps: {
-      attributes: {
-        class: 'document-editor__prose',
+  useEffect(() => {
+    latestBodyRef.current = body;
+  }, [body]);
+
+  useEffect(() => {
+    latestOnTitleChangeRef.current = onTitleChange;
+  }, [onTitleChange]);
+
+  useEffect(() => {
+    latestTitleRef.current = title;
+  }, [title]);
+
+  useEffect(() => {
+    if (!collaboration) {
+      setCollaborationStatus('disabled');
+      setCollaborationPeers([]);
+      setCollaborationError(null);
+      setCollaborationReadOnly(false);
+      return;
+    }
+
+    if (!collaborationUrl) {
+      setCollaborationStatus('disabled');
+      setCollaborationPeers([]);
+      setCollaborationError('Missing collaboration server URL');
+      setCollaborationReadOnly(false);
+      return;
+    }
+
+    setCollaborationStatus('connecting');
+    setCollaborationPeers([]);
+    setCollaborationError(null);
+    setCollaborationReadOnly(false);
+  }, [collaboration?.documentId, collaboration?.token, collaborationUrl]);
+
+  useEffect(() => {
+    if (!collaborationSession || !collaborationUser) {
+      return;
+    }
+
+    collaborationSession.provider.setAwarenessField('user', collaborationUser);
+
+    return () => {
+      collaborationSession.provider.destroy();
+      collaborationSession.document.destroy();
+    };
+  }, [collaborationSession, collaborationUser]);
+
+  useEffect(() => {
+    seededCollaborationDocumentIdRef.current = null;
+    collaborationAwarenessStatesRef.current = [];
+    setCollaborationAwarenessRevision(0);
+    setCollaborationAwarenessStableRevision(0);
+  }, [collaboration?.documentId]);
+
+  useEffect(() => {
+    if (
+      !collaborationSession ||
+      !collaboration ||
+      collaborationStatus !== 'synced' ||
+      collaborationAwarenessRevision === 0
+    ) {
+      setCollaborationAwarenessStableRevision(0);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setCollaborationAwarenessStableRevision(collaborationAwarenessRevision);
+    }, 400);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    collaboration?.documentId,
+    collaborationAwarenessRevision,
+    collaborationSession,
+    collaborationStatus,
+  ]);
+
+  const editor = useEditor(
+    {
+      extensions,
+      content: collaborationEnabled ? '<p></p>' : buildEditorHtmlFromBlocks(body),
+      editorProps: {
+        attributes: {
+          class: 'document-editor__prose',
+        },
       },
-    },
-    editable: !disabled,
-    onUpdate: ({ editor: currentEditor }) => {
-      latestOnBodyChangeRef.current(
-        createDocumentBlocksFromEditorJson(currentEditor.getJSON(), {
+      editable: !effectiveDisabled,
+      onUpdate: ({ editor: currentEditor }) => {
+        const nextBody = createDocumentBlocksFromEditorJson(currentEditor.getJSON(), {
           currentDocumentId: latestSerializationContextRef.current.currentDocumentId,
           ownerEntityId: latestSerializationContextRef.current.ownerEntityId,
           linkDefinitions: latestSerializationContextRef.current.linkDefinitions,
-        }),
-      );
+        });
+
+        if (
+          collaborationEnabled &&
+          shouldDeferInitialEmptyCollaborationBody(
+            hasRenderableDocumentBlocks(nextBody) ? 1 : 0,
+            hasRenderableDocumentBlocks(latestBodyRef.current) ? 1 : 0,
+            seededCollaborationDocumentIdRef.current,
+            collaboration?.documentId ?? null,
+          )
+        ) {
+          return;
+        }
+
+        latestOnBodyChangeRef.current(nextBody);
+      },
     },
-  });
+    [body, collaborationEnabled, currentDocumentId, effectiveDisabled, extensions],
+  );
 
   useEffect(() => {
     if (!editor) {
       return;
     }
 
-    editor.setEditable(!disabled);
-  }, [disabled, editor]);
+    editor.setEditable(!effectiveDisabled);
+  }, [editor, effectiveDisabled]);
 
   useEffect(() => {
-    if (!editor) {
+    if (!editor || collaborationEnabled) {
       return;
     }
 
@@ -119,7 +335,111 @@ export function DocumentComposer({
     }
 
     editor.commands.setContent(buildEditorHtmlFromBlocks(body), false);
-  }, [body, currentDocumentId, editor, linkDefinitions, ownerEntityId]);
+  }, [body, collaborationEnabled, currentDocumentId, editor, linkDefinitions, ownerEntityId]);
+
+  useEffect(() => {
+    if (!collaborationSession) {
+      return;
+    }
+
+    const syncTitleFromCollaboration = () => {
+      const nextTitle = collaborationSession.titleText.toString();
+
+      if (
+        shouldDeferInitialEmptyCollaborationTitle(
+          nextTitle,
+          latestTitleRef.current,
+          seededCollaborationDocumentIdRef.current,
+          collaboration?.documentId ?? null,
+        )
+      ) {
+        return;
+      }
+
+      if (nextTitle === latestTitleRef.current) {
+        return;
+      }
+
+      latestTitleRef.current = nextTitle;
+      latestOnTitleChangeRef.current(nextTitle);
+    };
+
+    collaborationSession.titleText.observe(syncTitleFromCollaboration);
+    syncTitleFromCollaboration();
+
+    return () => {
+      collaborationSession.titleText.unobserve(syncTitleFromCollaboration);
+    };
+  }, [collaboration?.documentId, collaborationSession]);
+
+  useEffect(() => {
+    if (
+      !editor ||
+      !collaborationSession ||
+      !collaboration ||
+      collaborationStatus !== 'synced' ||
+      seededCollaborationDocumentIdRef.current === collaboration.documentId
+    ) {
+      return;
+    }
+
+    const currentBlocksBeforeSeed = createDocumentBlocksFromEditorJson(editor.getJSON(), {
+      currentDocumentId,
+      ownerEntityId,
+      linkDefinitions,
+    });
+    const hasCurrentBody = hasRenderableDocumentBlocks(currentBlocksBeforeSeed);
+    const hasCurrentTitle = collaborationSession.titleText.length > 0;
+    const canSeedFromCurrentClient =
+      collaborationAwarenessRevision > 0 &&
+      collaborationAwarenessRevision === collaborationAwarenessStableRevision &&
+      isPrimaryCollaborationSeedClient(
+        collaborationAwarenessStatesRef.current,
+        collaborationSession.document.clientID,
+      );
+    const shouldSeedTitle =
+      canSeedFromCurrentClient &&
+      !hasCurrentTitle &&
+      title.trim().length > 0;
+    const shouldSeedBody =
+      canSeedFromCurrentClient &&
+      !hasCurrentBody &&
+      hasRenderableDocumentBlocks(body);
+
+    if (!shouldSeedTitle && !shouldSeedBody && !hasCurrentTitle && !hasCurrentBody) {
+      return;
+    }
+
+    if (shouldSeedTitle) {
+      collaborationSession.document.transact(() => {
+        collaborationSession.titleText.insert(0, title);
+      }, 'seed-title');
+    }
+
+    if (shouldSeedBody) {
+      editor.commands.setContent(buildEditorHtmlFromBlocks(body), false);
+    }
+
+    seededCollaborationDocumentIdRef.current = collaboration.documentId;
+
+    const currentBlocks = shouldSeedBody ? body : currentBlocksBeforeSeed;
+
+    if (JSON.stringify(currentBlocks) !== JSON.stringify(body)) {
+      latestOnBodyChangeRef.current(currentBlocks);
+    }
+  }, [
+    body,
+    collaboration,
+    collaborationSession,
+    collaborationAwarenessRevision,
+    collaborationAwarenessStableRevision,
+    collaborationStatus,
+    currentDocumentId,
+    editor,
+    linkDefinitions,
+    ownerEntityId,
+    title,
+  ]);
 
   useEffect(() => {
     setMentionEntityId((current) => current || entities[0]?.id || '');
@@ -128,6 +448,11 @@ export function DocumentComposer({
   const canInsertMention = useMemo(
     () => !!editor && !!mentionEntityId && entities.some((entity) => entity.id === mentionEntityId),
     [editor, entities, mentionEntityId],
+  );
+
+  const collaborationStatusLabel = formatCollaborationStatus(
+    collaborationStatus,
+    !!currentDocumentId,
   );
 
   const insertMention = () => {
@@ -144,15 +469,80 @@ export function DocumentComposer({
     editor.chain().focus().insertContent(` ${buildEntityMentionToken(entity)} `).run();
   };
 
+  const handleTitleChange = (value: string) => {
+    if (!collaborationSession) {
+      latestTitleRef.current = value;
+      latestOnTitleChangeRef.current(value);
+      return;
+    }
+
+    const currentValue = collaborationSession.titleText.toString();
+
+    if (currentValue === value) {
+      return;
+    }
+
+    collaborationSession.document.transact(() => {
+      collaborationSession.titleText.delete(0, collaborationSession.titleText.length);
+
+      if (value.length > 0) {
+        collaborationSession.titleText.insert(0, value);
+      }
+    }, 'title-input');
+  };
+
   return (
     <div className="document-editor">
+      <div className="document-editor__presence">
+        <div className="document-editor__presence-status">
+          <span
+            className={`document-editor__presence-dot document-editor__presence-dot--${collaborationStatus}`}
+            aria-hidden="true"
+          />
+          <strong>{collaborationStatusLabel}</strong>
+          <span>
+            {collaborationEnabled
+              ? currentDocumentId
+              : currentDocumentId
+                ? 'Realtime off for this document'
+                : 'Save once to share live edits'}
+          </span>
+        </div>
+        {collaborationPeers.length > 0 ? (
+          <div className="document-editor__presence-list" aria-label="Active collaborators">
+            {collaborationPeers.map((peer) => (
+              <span
+                key={peer.id}
+                className={`document-editor__presence-pill${peer.isCurrentUser ? ' is-current' : ''}`}
+                title={peer.email}
+              >
+                <span
+                  className="document-editor__presence-avatar"
+                  style={{ backgroundColor: peer.color }}
+                  aria-hidden="true"
+                >
+                  {peer.initials}
+                </span>
+                <span>{peer.isCurrentUser ? `${peer.name} (you)` : peer.name}</span>
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      {collaborationError ? (
+        <p className="document-editor__presence-error" role="status">
+          {collaborationError}
+        </p>
+      ) : null}
+
       <label className="field">
-        <span>Название документа</span>
+        <span>РќР°Р·РІР°РЅРёРµ РґРѕРєСѓРјРµРЅС‚Р°</span>
         <input
           type="text"
           value={title}
-          disabled={disabled}
-          onChange={(event) => onTitleChange(event.target.value)}
+          disabled={effectiveDisabled}
+          onChange={(event) => handleTitleChange(event.target.value)}
         />
       </label>
 
@@ -160,35 +550,35 @@ export function DocumentComposer({
         <button
           type="button"
           className="button button--ghost"
-          disabled={disabled}
+          disabled={effectiveDisabled}
           onClick={() => editor?.chain().focus().toggleBold().run()}
         >
-          Жирный
+          Р–РёСЂРЅС‹Р№
         </button>
         <button
           type="button"
           className="button button--ghost"
-          disabled={disabled}
+          disabled={effectiveDisabled}
           onClick={() => editor?.chain().focus().toggleItalic().run()}
         >
-          Курсив
+          РљСѓСЂСЃРёРІ
         </button>
         <button
           type="button"
           className="button button--ghost"
-          disabled={disabled}
+          disabled={effectiveDisabled}
           onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}
         >
-          Заголовок
+          Р—Р°РіРѕР»РѕРІРѕРє
         </button>
         <label className="document-editor__mention-picker">
-          <span>Ссылка на сущность</span>
+          <span>РЎСЃС‹Р»РєР° РЅР° СЃСѓС‰РЅРѕСЃС‚СЊ</span>
           <select
             value={mentionEntityId}
-            disabled={disabled || entities.length === 0}
+            disabled={effectiveDisabled || entities.length === 0}
             onChange={(event) => setMentionEntityId(event.target.value)}
           >
-            {entities.length === 0 ? <option value="">Нет сущностей</option> : null}
+            {entities.length === 0 ? <option value="">РќРµС‚ СЃСѓС‰РЅРѕСЃС‚РµР№</option> : null}
             {entities.map((entity) => (
               <option key={entity.id} value={entity.id}>
                 {entity.title}
@@ -199,10 +589,10 @@ export function DocumentComposer({
         <button
           type="button"
           className="button"
-          disabled={disabled || !canInsertMention}
+          disabled={effectiveDisabled || !canInsertMention}
           onClick={insertMention}
         >
-          Вставить ссылку
+          Р’СЃС‚Р°РІРёС‚СЊ СЃСЃС‹Р»РєСѓ
         </button>
       </div>
 
@@ -211,4 +601,16 @@ export function DocumentComposer({
       </div>
     </div>
   );
+}
+
+function mapCollaborationStatus(status: WebSocketStatus): DocumentCollaborationStatus {
+  switch (status) {
+    case WebSocketStatus.Connecting:
+      return 'connecting';
+    case WebSocketStatus.Connected:
+      return 'connected';
+    case WebSocketStatus.Disconnected:
+    default:
+      return 'disconnected';
+  }
 }

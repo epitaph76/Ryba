@@ -50,6 +50,7 @@ services:
       PORT: ${COLLAB_PORT:-1234}
       COLLAB_INSTANCE_NAME: ryba-collab-prototype
       PUBLIC_URL: http://localhost:${COLLAB_PORT:-1234}
+      API_BASE_URL: http://api:${API_PORT:-3001}
     ports:
       - "${COLLAB_PORT:-1234}:${COLLAB_PORT:-1234}"
     restart: unless-stopped
