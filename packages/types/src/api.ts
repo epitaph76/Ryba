@@ -6,6 +6,8 @@ export type ApiErrorCode =
   | 'CONFLICT'
   | 'UNAUTHORIZED'
   | 'FORBIDDEN'
+  | 'QUERY_TIMEOUT'
+  | 'EXTERNAL_SOURCE_ERROR'
   | 'INTERNAL_ERROR';
 
 export interface ApiMeta {

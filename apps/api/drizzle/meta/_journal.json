@@ -57,6 +57,13 @@
       "when": 1775677942103,
       "tag": "0007_outgoing_zaran",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1775756294398,
+      "tag": "0008_funny_millenium_guard",
+      "breakpoints": true
     }
   ]
 }

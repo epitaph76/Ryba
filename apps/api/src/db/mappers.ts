@@ -1,8 +1,18 @@
-import { canvasLayoutSchema, documentBlockSchema, savedViewConfigSchema } from '@ryba/schemas';
+import {
+  canvasLayoutSchema,
+  dataSourceConnectionConfigSchema,
+  documentBlockSchema,
+  queryResultColumnRecordSchema,
+  queryResultRowsSchema,
+  savedQueryParameterDefinitionSchema,
+  savedViewConfigSchema,
+  savedQueryRuntimeParametersSchema,
+} from '@ryba/schemas';
 import type {
   ActivityActorRecord,
   ActivityEventRecord,
   CanvasStateRecord,
+  DataSourceRecord,
   DocumentBacklinkRecord,
   DocumentEntityPreview,
   DocumentRecord,
@@ -11,7 +21,9 @@ import type {
   EntityTypeRecord,
   GroupRecord,
   JsonObject,
+  QueryRunRecord,
   RelationRecord,
+  SavedQueryRecord,
   SavedViewRecord,
   SpaceRecord,
   UserRecord,
@@ -22,6 +34,7 @@ import type {
 
 import type {
   activityEvents,
+  dataSources,
   entities,
   entityTypeFields,
   entityTypes,
@@ -30,8 +43,10 @@ import type {
   documents,
   savedViews,
   groups,
+  queryRuns,
   groupCanvasStates,
   spaceCanvasStates,
+  savedQueries,
   spaces,
   users,
   workspaceMembers,
@@ -50,6 +65,9 @@ type EntityTypeFieldRow = typeof entityTypeFields.$inferSelect;
 type RelationRow = typeof relations.$inferSelect;
 type DocumentRow = typeof documents.$inferSelect;
 type SavedViewRow = typeof savedViews.$inferSelect;
+type DataSourceRow = typeof dataSources.$inferSelect;
+type SavedQueryRow = typeof savedQueries.$inferSelect;
+type QueryRunRow = typeof queryRuns.$inferSelect;
 type DocumentEntityMentionRow = typeof documentEntityMentions.$inferSelect;
 type SpaceCanvasStateRow = typeof spaceCanvasStates.$inferSelect;
 type GroupCanvasStateRow = typeof groupCanvasStates.$inferSelect;
@@ -249,6 +267,63 @@ export const toSavedViewRecord = (row: SavedViewRow): SavedViewRecord => ({
   updatedByUserId: row.updatedByUserId,
   createdAt: row.createdAt,
   updatedAt: row.updatedAt,
+});
+
+export const toDataSourceRecord = (row: DataSourceRow): DataSourceRecord => {
+  const config = dataSourceConnectionConfigSchema.parse(row.connectionConfig);
+
+  return {
+    id: row.id,
+    workspaceId: row.workspaceId,
+    kind: row.kind as DataSourceRecord['kind'],
+    name: row.name,
+    description: row.description,
+    host: config.host,
+    port: config.port,
+    databaseName: config.databaseName,
+    username: config.username,
+    sslMode: config.sslMode,
+    createdByUserId: row.createdByUserId,
+    updatedByUserId: row.updatedByUserId,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+};
+
+export const toSavedQueryRecord = (row: SavedQueryRow): SavedQueryRecord => ({
+  id: row.id,
+  workspaceId: row.workspaceId,
+  spaceId: row.spaceId,
+  groupId: row.groupId,
+  dataSourceId: row.dataSourceId,
+  name: row.name,
+  description: row.description,
+  sqlTemplate: row.sqlTemplate,
+  parameterDefinitions: savedQueryParameterDefinitionSchema.array().parse(row.parameterDefinitions),
+  createdByUserId: row.createdByUserId,
+  updatedByUserId: row.updatedByUserId,
+  createdAt: row.createdAt,
+  updatedAt: row.updatedAt,
+});
+
+export const toQueryRunRecord = (row: QueryRunRow): QueryRunRecord => ({
+  id: row.id,
+  workspaceId: row.workspaceId,
+  spaceId: row.spaceId,
+  groupId: row.groupId,
+  savedQueryId: row.savedQueryId,
+  dataSourceId: row.dataSourceId,
+  actorUserId: row.actorUserId,
+  status: row.status as QueryRunRecord['status'],
+  parameters: ensureJsonObject(savedQueryRuntimeParametersSchema.parse(row.parameters)),
+  rowCount: row.rowCount,
+  truncated: row.truncated,
+  columns: queryResultColumnRecordSchema.array().parse(row.columns),
+  rows: queryResultRowsSchema.parse(row.rows) as QueryRunRecord['rows'],
+  errorMessage: row.errorMessage,
+  durationMs: row.durationMs,
+  startedAt: row.startedAt,
+  finishedAt: row.finishedAt,
 });
 
 export const toDocumentEntityPreview = (

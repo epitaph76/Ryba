@@ -27,6 +27,8 @@ export const apiErrorCodeSchema = z.enum([
   'CONFLICT',
   'UNAUTHORIZED',
   'FORBIDDEN',
+  'QUERY_TIMEOUT',
+  'EXTERNAL_SOURCE_ERROR',
   'INTERNAL_ERROR',
 ]);
 

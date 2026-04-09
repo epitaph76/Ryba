@@ -5,6 +5,7 @@ export * from './canvas';
 export * from './document';
 export * from './document-link';
 export * from './entity';
+export * from './external-data';
 export * from './json';
 export * from './relation';
 export * from './user';

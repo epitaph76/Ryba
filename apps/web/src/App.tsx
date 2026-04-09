@@ -19,6 +19,7 @@ import type {
   AuthSession,
   CanvasEdgeLayout,
   CanvasStateRecord,
+  DataSourceRecord,
   DocumentBacklinkRecord,
   DocumentDetailRecord,
   DocumentLinkDefinition,
@@ -27,7 +28,9 @@ import type {
   EntityTypeFieldRecord,
   EntityTypeRecord,
   GroupRecord,
+  QueryRunRecord,
   RelationRecord,
+  SavedQueryRecord,
   SavedViewRecord,
   SpaceRecord,
   UserRecord,
@@ -81,6 +84,7 @@ import {
 import { getFieldOptions, type FieldEditorValue } from './field-renderers';
 import { isRecordInSubspaceContext, resolveActiveSubspace } from './subspace-model';
 import { getWorkspaceCapabilities } from './workspace-permissions';
+import { ExternalDataPanel } from './components/ExternalDataPanel';
 import { TableView } from './components/TableView';
 import {
   buildDraftFromSavedView,
@@ -199,6 +203,7 @@ export function App() {
   const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
   const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMemberDetailRecord[]>([]);
   const [activityItems, setActivityItems] = useState<ActivityEventRecord[]>([]);
+  const [dataSources, setDataSources] = useState<DataSourceRecord[]>([]);
   const [spaces, setSpaces] = useState<SpaceRecord[]>([]);
   const [groups, setGroups] = useState<GroupRecord[]>([]);
   const [entities, setEntities] = useState<EntityRecord[]>([]);
@@ -240,6 +245,9 @@ export function App() {
   const [documentEditorBody, setDocumentEditorBody] = useState<DocumentDetailRecord['document']['body']>([]);
   const [spaceDocuments, setSpaceDocuments] = useState<DocumentRecord[]>([]);
   const [documentDefinitionDocuments, setDocumentDefinitionDocuments] = useState<DocumentRecord[]>([]);
+  const [savedQueries, setSavedQueries] = useState<SavedQueryRecord[]>([]);
+  const [activeSavedQueryId, setActiveSavedQueryId] = useState<string | null>(null);
+  const [queryRuns, setQueryRuns] = useState<QueryRunRecord[]>([]);
   const [savedViews, setSavedViews] = useState<SavedViewRecord[]>([]);
   const [activeSavedViewId, setActiveSavedViewId] = useState<string | null>(null);
   const [tableLensDraft, setTableLensDraft] = useState<StructuredViewDraft>(() =>
@@ -483,6 +491,7 @@ export function App() {
     setWorkspaces([]);
     setWorkspaceMembers([]);
     setActivityItems([]);
+    setDataSources([]);
     setSpaces([]);
     setGroups([]);
     setEntities([]);
@@ -507,6 +516,9 @@ export function App() {
     setDocumentEditorBody([]);
     setSpaceDocuments([]);
     setDocumentDefinitionDocuments([]);
+    setSavedQueries([]);
+    setActiveSavedQueryId(null);
+    setQueryRuns([]);
     setSavedViews([]);
     setActiveSavedViewId(null);
     setTableLensDraft(createDefaultTableDraft([]));
@@ -606,6 +618,12 @@ export function App() {
     return response.items;
   };
 
+  const loadDataSources = async (activeToken: string, workspaceId: string) => {
+    const response = await canvasApi.listDataSources(activeToken, workspaceId);
+    setDataSources(response.items);
+    return response.items;
+  };
+
   const refreshWorkspaceMembers = async () => {
     if (!token || !selectedWorkspaceId) {
       return;
@@ -677,6 +695,29 @@ export function App() {
     setActiveSavedViewId((current) =>
       current && response.items.some((savedView) => savedView.id === current) ? current : null,
     );
+    return response.items;
+  };
+
+  const loadSavedQueries = async (
+    activeToken: string,
+    spaceId: string,
+    groupId: string | null = activeSubspace.groupId,
+  ) => {
+    const response = groupId
+      ? await canvasApi.listGroupSavedQueries(activeToken, groupId)
+      : await canvasApi.listSavedQueries(activeToken, spaceId);
+    setSavedQueries(response.items);
+    setActiveSavedQueryId((current) =>
+      current && response.items.some((savedQuery) => savedQuery.id === current)
+        ? current
+        : response.items[0]?.id ?? null,
+    );
+    return response.items;
+  };
+
+  const loadQueryRuns = async (activeToken: string, savedQueryId: string) => {
+    const response = await canvasApi.listQueryRuns(activeToken, savedQueryId);
+    setQueryRuns(response.items);
     return response.items;
   };
 
@@ -1067,6 +1108,7 @@ export function App() {
     if (!token || !selectedWorkspaceId) {
       setWorkspaceMembers([]);
       setActivityItems([]);
+      setDataSources([]);
       setSpaces([]);
       setGroups([]);
       setSelectedSpaceId('');
@@ -1079,6 +1121,7 @@ export function App() {
         loadEntityTypes(token, selectedWorkspaceId),
         loadWorkspaceMembers(token, selectedWorkspaceId),
         loadWorkspaceActivity(token, selectedWorkspaceId),
+        loadDataSources(token, selectedWorkspaceId),
       ]);
     });
   }, [selectedWorkspaceId, token]);
@@ -1090,6 +1133,9 @@ export function App() {
       setDocumentDetail(null);
       setDocumentEditorDocumentId(null);
       setSpaceDocuments([]);
+      setSavedQueries([]);
+      setActiveSavedQueryId(null);
+      setQueryRuns([]);
       setSavedViews([]);
       setActiveSavedViewId(null);
       setTableLensDraft(createDefaultTableDraft(entityTypes));
@@ -1101,17 +1147,38 @@ export function App() {
 
   useEffect(() => {
     if (!token || !selectedSpaceId) {
+      setSavedQueries([]);
+      setActiveSavedQueryId(null);
+      setQueryRuns([]);
       setSavedViews([]);
       setActiveSavedViewId(null);
       setTableLensDraft(createDefaultTableDraft(entityTypes));
       return;
     }
 
+    setSavedQueries([]);
+    setActiveSavedQueryId(null);
+    setQueryRuns([]);
     setSavedViews([]);
     setActiveSavedViewId(null);
     setTableLensDraft((current) => createDefaultTableDraft(entityTypes, current.viewType));
+    void loadSavedQueries(token, selectedSpaceId, activeSubspace.groupId);
     void loadCanvas(token, selectedSpaceId, null, activeSubspace.groupId);
   }, [activeSubspace.groupId, entityTypes, selectedSpaceId, token]);
+
+  useEffect(() => {
+    if (!token || !activeSavedQueryId) {
+      setQueryRuns([]);
+      return;
+    }
+
+    void loadQueryRuns(token, activeSavedQueryId).catch((error) => {
+      const message =
+        error instanceof Error ? error.message : 'Failed to load query execution history';
+      appendLog(message);
+      setQueryRuns([]);
+    });
+  }, [activeSavedQueryId, token]);
 
   useEffect(() => {
     if (!activeSavedViewId) {
@@ -1405,6 +1472,133 @@ export function App() {
     withAction('Создание сущности', async () => {
       await createEntityAtPosition(getCanvasCenterPosition(), 'панели');
     });
+
+  const createDataSource = async (payload: {
+    name: string;
+    description?: string | null;
+    connectionString: string;
+  }) => {
+    if (!token || !selectedWorkspaceId || !canManageSelectedWorkspace) {
+      throw new Error('Select a workspace with owner access before connecting a source.');
+    }
+
+    const created = await canvasApi.createDataSource(token, selectedWorkspaceId, payload);
+    setDataSources((current) => [created, ...current.filter((item) => item.id !== created.id)]);
+    await refreshWorkspaceActivity();
+    appendLog(`External source connected: ${created.name}`);
+
+    return created;
+  };
+
+  const createSavedQuery = async (payload: {
+    name: string;
+    description?: string | null;
+    dataSourceId: string;
+    sqlTemplate: string;
+    parameterDefinitions: SavedQueryRecord['parameterDefinitions'];
+  }) => {
+    if (!token || !selectedSpaceId || !canEditSelectedWorkspace) {
+      throw new Error('Select a writable space before saving a query.');
+    }
+
+    const created = activeSubspace.groupId
+      ? await canvasApi.createGroupSavedQuery(token, activeSubspace.groupId, payload)
+      : await canvasApi.createSavedQuery(token, selectedSpaceId, payload);
+    setSavedQueries((current) => [created, ...current.filter((item) => item.id !== created.id)]);
+    setActiveSavedQueryId(created.id);
+    setQueryRuns([]);
+    await refreshWorkspaceActivity();
+    appendLog(`Saved query created: ${created.name}`);
+
+    return created;
+  };
+
+  const updateSavedQuery = async (
+    savedQueryId: string,
+    payload: {
+      name?: string;
+      description?: string | null;
+      dataSourceId?: string;
+      sqlTemplate?: string;
+      parameterDefinitions?: SavedQueryRecord['parameterDefinitions'];
+    },
+  ) => {
+    if (!token || !canEditSelectedWorkspace) {
+      throw new Error('You need edit access before updating a query.');
+    }
+
+    const updated = await canvasApi.updateSavedQuery(token, savedQueryId, payload);
+    setSavedQueries((current) =>
+      current.map((savedQuery) => (savedQuery.id === savedQueryId ? updated : savedQuery)),
+    );
+    setActiveSavedQueryId(updated.id);
+    await refreshWorkspaceActivity();
+    appendLog(`Saved query updated: ${updated.name}`);
+
+    return updated;
+  };
+
+  const deleteSavedQuery = async (savedQueryId: string) => {
+    if (!token || !canEditSelectedWorkspace) {
+      throw new Error('You need edit access before deleting a query.');
+    }
+
+    await canvasApi.deleteSavedQuery(token, savedQueryId);
+    setSavedQueries((current) => current.filter((savedQuery) => savedQuery.id !== savedQueryId));
+    setActiveSavedQueryId((current) => (current === savedQueryId ? null : current));
+    setQueryRuns((current) => (activeSavedQueryId === savedQueryId ? [] : current));
+    await refreshWorkspaceActivity();
+    appendLog('Saved query deleted');
+  };
+
+  const executeSavedQuery = async (
+    savedQueryId: string,
+    payload: {
+      parameters: Record<string, string | number | boolean | null>;
+    },
+  ) => {
+    if (!token || !selectedSpaceId) {
+      throw new Error('Select a space before running a saved query.');
+    }
+
+    const run = await canvasApi.executeSavedQuery(token, savedQueryId, payload);
+    setActiveSavedQueryId(savedQueryId);
+    setQueryRuns((current) => [run, ...current.filter((item) => item.id !== run.id)]);
+    await refreshWorkspaceActivity();
+    appendLog(
+      run.status === 'failed'
+        ? `Saved query failed: ${run.errorMessage ?? savedQueryId}`
+        : `Saved query executed: ${run.rowCount} rows`,
+    );
+
+    return run;
+  };
+
+  const publishQueryRun = async (
+    queryRunId: string,
+    payload: {
+      title?: string;
+    },
+  ) => {
+    if (!token || !selectedSpaceId || !canEditSelectedWorkspace) {
+      throw new Error('You need edit access before publishing query output.');
+    }
+
+    const detail = await canvasApi.publishQueryRunToDocument(token, queryRunId, payload);
+    await Promise.all([
+      refreshWorkspaceActivity(),
+      refreshCanvasDataPreservingLayout(
+        token,
+        selectedSpaceId,
+        selectedEntityId,
+        activeSubspace.groupId,
+      ),
+      loadDocumentDefinitionDocuments(token, selectedSpaceId),
+    ]);
+    appendLog(`Dataset published: ${detail.document.title}`);
+
+    return detail;
+  };
 
   const resetTableLensDraft = (viewType: StructuredViewDraft['viewType'] = tableLensDraft.viewType) => {
     setActiveSavedViewId(null);
@@ -2887,6 +3081,54 @@ export function App() {
         </aside>
 
         <section className="canvas-stage">
+          <ExternalDataPanel
+            scopeLabel={
+              activeSubspace.groupId
+                ? `Group: ${selectedGroup?.name ?? 'subspace'}`
+                : `Space: ${selectedSpace?.name ?? 'workspace'}`
+            }
+            dataSources={dataSources}
+            savedQueries={savedQueries}
+            activeSavedQueryId={activeSavedQueryId}
+            queryRuns={queryRuns}
+            disabled={!token || !selectedSpaceId}
+            busy={!!busyLabel}
+            canManageDataSources={canManageSelectedWorkspace}
+            canEditQueries={canEditSelectedWorkspace}
+            canPublishOutputs={canEditSelectedWorkspace}
+            onSelectSavedQuery={setActiveSavedQueryId}
+            onCreateDataSource={(input) => {
+              void withAction('Connecting external source', async () => {
+                await createDataSource(input);
+              });
+            }}
+            onCreateSavedQuery={(input) => {
+              void withAction('Saving query', async () => {
+                await createSavedQuery(input);
+              });
+            }}
+            onUpdateSavedQuery={(savedQueryId, input) => {
+              void withAction('Updating query', async () => {
+                await updateSavedQuery(savedQueryId, input);
+              });
+            }}
+            onDeleteSavedQuery={(savedQueryId) => {
+              void withAction('Deleting query', async () => {
+                await deleteSavedQuery(savedQueryId);
+              });
+            }}
+            onExecuteSavedQuery={(savedQueryId, input) => {
+              void withAction('Running saved query', async () => {
+                await executeSavedQuery(savedQueryId, input);
+              });
+            }}
+            onPublishQueryRun={(queryRunId, input) => {
+              void withAction('Publishing dataset', async () => {
+                await publishQueryRun(queryRunId, input);
+              });
+            }}
+          />
+
           <TableView
             entities={entities}
             entityTypes={entityTypes}

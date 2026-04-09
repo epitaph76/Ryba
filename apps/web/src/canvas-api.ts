@@ -4,13 +4,16 @@ import type {
   AuthSession,
   CanvasStateInput,
   CanvasStateRecord,
+  DataSourceRecord,
   DocumentBacklinkRecord,
   DocumentDetailRecord,
   DocumentRecord,
   EntityRecord,
   EntityTypeRecord,
   GroupRecord,
+  QueryRunRecord,
   RelationRecord,
+  SavedQueryRecord,
   SavedViewRecord,
   SpaceRecord,
   UserRecord,
@@ -150,6 +153,37 @@ export const canvasApi = {
     return request<ListResponse<ActivityEventRecord>>(
       `/workspaces/${workspaceId}/activity`,
       { method: 'GET' },
+      token,
+    );
+  },
+
+  listDataSources(token: string, workspaceId: string) {
+    return request<ListResponse<DataSourceRecord>>(
+      `/workspaces/${workspaceId}/data-sources`,
+      { method: 'GET' },
+      token,
+    );
+  },
+
+  createDataSource(
+    token: string,
+    workspaceId: string,
+    input: {
+      name: string;
+      description?: string | null;
+      connectionString: string;
+    },
+  ) {
+    return request<DataSourceRecord>(
+      `/workspaces/${workspaceId}/data-sources`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          name: input.name,
+          description: input.description ?? null,
+          connectionString: input.connectionString,
+        }),
+      },
       token,
     );
   },
@@ -447,6 +481,149 @@ export const canvasApi = {
       `/saved-views/${savedViewId}`,
       {
         method: 'DELETE',
+      },
+      token,
+    );
+  },
+
+  listSavedQueries(token: string, spaceId: string) {
+    return request<ListResponse<SavedQueryRecord>>(
+      `/spaces/${spaceId}/saved-queries`,
+      { method: 'GET' },
+      token,
+    );
+  },
+
+  listGroupSavedQueries(token: string, groupId: string) {
+    return request<ListResponse<SavedQueryRecord>>(
+      `/groups/${groupId}/saved-queries`,
+      { method: 'GET' },
+      token,
+    );
+  },
+
+  createSavedQuery(
+    token: string,
+    spaceId: string,
+    input: {
+      name: string;
+      description?: string | null;
+      dataSourceId: string;
+      sqlTemplate: string;
+      parameterDefinitions: SavedQueryRecord['parameterDefinitions'];
+    },
+  ) {
+    return request<SavedQueryRecord>(
+      `/spaces/${spaceId}/saved-queries`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          name: input.name,
+          description: input.description ?? null,
+          dataSourceId: input.dataSourceId,
+          sqlTemplate: input.sqlTemplate,
+          parameterDefinitions: input.parameterDefinitions,
+        }),
+      },
+      token,
+    );
+  },
+
+  createGroupSavedQuery(
+    token: string,
+    groupId: string,
+    input: {
+      name: string;
+      description?: string | null;
+      dataSourceId: string;
+      sqlTemplate: string;
+      parameterDefinitions: SavedQueryRecord['parameterDefinitions'];
+    },
+  ) {
+    return request<SavedQueryRecord>(
+      `/groups/${groupId}/saved-queries`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          name: input.name,
+          description: input.description ?? null,
+          dataSourceId: input.dataSourceId,
+          sqlTemplate: input.sqlTemplate,
+          parameterDefinitions: input.parameterDefinitions,
+        }),
+      },
+      token,
+    );
+  },
+
+  updateSavedQuery(
+    token: string,
+    savedQueryId: string,
+    input: {
+      name?: string;
+      description?: string | null;
+      dataSourceId?: string;
+      sqlTemplate?: string;
+      parameterDefinitions?: SavedQueryRecord['parameterDefinitions'];
+    },
+  ) {
+    return request<SavedQueryRecord>(
+      `/saved-queries/${savedQueryId}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(input),
+      },
+      token,
+    );
+  },
+
+  deleteSavedQuery(token: string, savedQueryId: string) {
+    return request<{ id: string }>(
+      `/saved-queries/${savedQueryId}`,
+      {
+        method: 'DELETE',
+      },
+      token,
+    );
+  },
+
+  executeSavedQuery(
+    token: string,
+    savedQueryId: string,
+    input: {
+      parameters: Record<string, string | number | boolean | null>;
+    },
+  ) {
+    return request<QueryRunRecord>(
+      `/saved-queries/${savedQueryId}/execute`,
+      {
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+      token,
+    );
+  },
+
+  listQueryRuns(token: string, savedQueryId: string) {
+    return request<ListResponse<QueryRunRecord>>(
+      `/saved-queries/${savedQueryId}/runs`,
+      { method: 'GET' },
+      token,
+    );
+  },
+
+  publishQueryRunToDocument(
+    token: string,
+    queryRunId: string,
+    input: {
+      title?: string;
+    } = {},
+  ) {
+    return request<DocumentDetailRecord>(
+      `/query-runs/${queryRunId}/publish-document`,
+      {
+        method: 'POST',
+        body: JSON.stringify(input),
       },
       token,
     );

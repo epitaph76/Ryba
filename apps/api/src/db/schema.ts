@@ -391,6 +391,122 @@ export const savedViews = pgTable(
   }),
 );
 
+export const dataSources = pgTable(
+  'data_sources',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    name: text('name').notNull(),
+    description: text('description'),
+    connectionConfig: jsonb('connection_config').notNull().default(sql`'{}'::jsonb`),
+    createdByUserId: text('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    updatedByUserId: text('updated_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { mode: 'string', withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { mode: 'string', withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    workspaceIdx: index('data_sources_workspace_idx').on(table.workspaceId),
+    workspaceNameUnique: unique('data_sources_workspace_name_unique').on(
+      table.workspaceId,
+      table.name,
+    ),
+  }),
+);
+
+export const savedQueries = pgTable(
+  'saved_queries',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    spaceId: text('space_id')
+      .notNull()
+      .references(() => spaces.id, { onDelete: 'cascade' }),
+    groupId: text('group_id').references(() => groups.id, { onDelete: 'cascade' }),
+    dataSourceId: text('data_source_id')
+      .notNull()
+      .references(() => dataSources.id, { onDelete: 'restrict' }),
+    name: text('name').notNull(),
+    description: text('description'),
+    sqlTemplate: text('sql_template').notNull(),
+    parameterDefinitions: jsonb('parameter_definitions').notNull().default(sql`'[]'::jsonb`),
+    createdByUserId: text('created_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    updatedByUserId: text('updated_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    createdAt: timestamp('created_at', { mode: 'string', withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { mode: 'string', withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    workspaceIdx: index('saved_queries_workspace_idx').on(table.workspaceId),
+    spaceIdx: index('saved_queries_space_idx').on(table.spaceId),
+    groupIdx: index('saved_queries_group_idx').on(table.groupId),
+    dataSourceIdx: index('saved_queries_data_source_idx').on(table.dataSourceId),
+  }),
+);
+
+export const queryRuns = pgTable(
+  'query_runs',
+  {
+    id: text('id').primaryKey(),
+    workspaceId: text('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    spaceId: text('space_id')
+      .notNull()
+      .references(() => spaces.id, { onDelete: 'cascade' }),
+    groupId: text('group_id').references(() => groups.id, { onDelete: 'cascade' }),
+    dataSourceId: text('data_source_id')
+      .notNull()
+      .references(() => dataSources.id, { onDelete: 'restrict' }),
+    savedQueryId: text('saved_query_id')
+      .notNull()
+      .references(() => savedQueries.id, { onDelete: 'cascade' }),
+    actorUserId: text('actor_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    status: text('status').notNull(),
+    parameters: jsonb('parameters').notNull().default(sql`'{}'::jsonb`),
+    rowCount: integer('row_count').notNull().default(0),
+    truncated: boolean('truncated').notNull().default(false),
+    columns: jsonb('columns').notNull().default(sql`'[]'::jsonb`),
+    rows: jsonb('rows').notNull().default(sql`'[]'::jsonb`),
+    errorMessage: text('error_message'),
+    durationMs: integer('duration_ms'),
+    startedAt: timestamp('started_at', { mode: 'string', withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    finishedAt: timestamp('finished_at', { mode: 'string', withTimezone: true }),
+  },
+  (table) => ({
+    workspaceIdx: index('query_runs_workspace_idx').on(table.workspaceId),
+    spaceIdx: index('query_runs_space_idx').on(table.spaceId),
+    groupIdx: index('query_runs_group_idx').on(table.groupId),
+    dataSourceIdx: index('query_runs_data_source_idx').on(table.dataSourceId),
+    savedQueryIdx: index('query_runs_saved_query_idx').on(table.savedQueryId),
+    actorIdx: index('query_runs_actor_idx').on(table.actorUserId),
+    startedAtIdx: index('query_runs_started_at_idx').on(table.startedAt),
+  }),
+);
+
 export const documentEntityMentions = pgTable(
   'document_entity_mentions',
   {
