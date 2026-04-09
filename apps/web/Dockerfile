@@ -20,7 +20,9 @@ WORKDIR /app
 COPY apps/web apps/web
 COPY packages/types packages/types
 
-RUN pnpm --filter @ryba/web typecheck && pnpm --filter @ryba/web build
+RUN pnpm --filter @ryba/types build \
+  && pnpm --filter @ryba/web typecheck \
+  && pnpm --filter @ryba/web build
 
 FROM nginx:1.27-alpine AS runtime
 
