@@ -252,6 +252,10 @@ export const canvasApi = {
     );
   },
 
+  getEntity(token: string, entityId: string) {
+    return request<EntityRecord>(`/entities/${entityId}`, { method: 'GET' }, token);
+  },
+
   createGroupEntity(
     token: string,
     groupId: string,

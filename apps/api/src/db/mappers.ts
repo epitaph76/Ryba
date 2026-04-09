@@ -253,7 +253,9 @@ export const toSavedViewRecord = (row: SavedViewRow): SavedViewRecord => ({
 
 export const toDocumentEntityPreview = (
   mention: Pick<DocumentEntityMentionRow, 'entityId' | 'label' | 'anchorId'>,
-  entity: Pick<EntityRecord, 'title' | 'summary' | 'entityTypeId'>,
+  entity: Pick<EntityRecord, 'title' | 'summary' | 'entityTypeId' | 'groupId'> & {
+    groupSlug: string | null;
+  },
 ): DocumentEntityPreview => ({
   entityId: mention.entityId,
   label: mention.label,
@@ -261,11 +263,15 @@ export const toDocumentEntityPreview = (
   title: entity.title,
   summary: entity.summary,
   entityTypeId: entity.entityTypeId,
+  groupId: entity.groupId,
+  groupSlug: entity.groupSlug,
 });
 
 export const toDocumentBacklinkRecord = (
   mention: Pick<DocumentEntityMentionRow, 'entityId' | 'label' | 'anchorId'>,
-  document: Pick<DocumentRecord, 'id' | 'entityId' | 'title' | 'previewText' | 'updatedAt'>,
+  document: Pick<DocumentRecord, 'id' | 'entityId' | 'groupId' | 'title' | 'previewText' | 'updatedAt'> & {
+    sourceGroupSlug: string | null;
+  },
 ): DocumentBacklinkRecord => ({
   entityId: mention.entityId,
   sourceEntityId: document.entityId,
@@ -275,6 +281,8 @@ export const toDocumentBacklinkRecord = (
   anchorId: mention.anchorId,
   previewText: document.previewText,
   updatedAt: document.updatedAt,
+  sourceGroupId: document.groupId,
+  sourceGroupSlug: document.sourceGroupSlug,
 });
 
 export const toCanvasStateRecord = (

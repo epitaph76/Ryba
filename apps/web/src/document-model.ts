@@ -12,6 +12,7 @@ import {
   escapeRegExp,
   extractDocumentLinkTokens,
   isDocumentLinkDefinitionReference,
+  parseDocumentLinkKey,
   replaceDocumentLinkTokensForPreview,
 } from './document-link-runtime';
 
@@ -302,19 +303,23 @@ const resolveDocumentLinks = (
         createDocumentLinkUsageReference({
           entityId: definition.sourceEntityId,
           key: definition.key,
+          definitionKey: definition.definitionKey,
           mode: nextMode,
           text: nextTokenText,
           sourceDocumentId: definition.sourceDocumentId,
           sourceBlockId: definition.sourceBlockId,
+          sourceGroupId: definition.sourceGroupId,
+          sourceGroupSlug: definition.sourceGroupSlug,
         }),
       );
-    } else if (context.ownerEntityId) {
+    } else if (context.ownerEntityId && parseDocumentLinkKey(token.key)?.qualifier === null) {
       nextText += token.raw;
       linkReferences.push(
         createDocumentLinkDefinitionReference({
           entityId: context.ownerEntityId,
           blockId,
           key: token.key,
+          definitionKey: token.definitionKey,
           mode: token.mode,
           text: token.text,
           documentId: currentDocumentId,
@@ -334,10 +339,13 @@ const resolveDocumentLinks = (
       createDocumentLinkUsageReference({
         entityId: definition.sourceEntityId,
         key: definition.key,
+        definitionKey: definition.definitionKey,
         mode: 'static',
         text: definition.text,
         sourceDocumentId: definition.sourceDocumentId,
         sourceBlockId: definition.sourceBlockId,
+        sourceGroupId: definition.sourceGroupId,
+        sourceGroupSlug: definition.sourceGroupSlug,
       }),
     );
   }
@@ -360,7 +368,7 @@ const replaceBareLinkKeys = (
 
   for (const definition of definitions) {
     const pattern = new RegExp(
-      `(^|[^A-Za-z0-9_-])(${escapeRegExp(definition.key)})\\b(?!\\*\\*|\\$\\$)`,
+      `(^|[^A-Za-z0-9_.-])(${escapeRegExp(definition.key)})\\b(?!\\*\\*|\\$\\$)`,
       'g',
     );
 
@@ -392,7 +400,7 @@ const replaceDocumentLinksAndMentions = (text: string, references: DocumentEntit
     }
 
     const token = new RegExp(
-      `(^|[^A-Za-z0-9_-])(${escapeRegExp(reference.linkKey)})\\b(?!\\*\\*|\\$\\$)`,
+      `(^|[^A-Za-z0-9_.-])(${escapeRegExp(reference.linkKey)})\\b(?!\\*\\*|\\$\\$)`,
       'g',
     );
 
@@ -436,7 +444,7 @@ const findStaticBareUsageDefinitions = (
 
   for (const definition of definitions) {
     const pattern = new RegExp(
-      `(^|[^A-Za-z0-9_-])(${escapeRegExp(definition.key)})\\b(?!\\*\\*|\\$\\$)`,
+      `(^|[^A-Za-z0-9_.-])(${escapeRegExp(definition.key)})\\b(?!\\*\\*|\\$\\$)`,
       'g',
     );
 

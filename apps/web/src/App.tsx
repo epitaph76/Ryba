@@ -44,7 +44,7 @@ import {
   type CanvasDeletionStateInput,
   type PendingEntityDeletion,
 } from './canvas-delete-undo';
-import { buildDocumentLinkDefinitionIndex } from './document-link-runtime';
+import { buildCrossSubspaceDocumentLinkDefinitions } from './document-link-runtime';
 import {
   buildCanvasGraph,
   serializeCanvasState,
@@ -238,6 +238,7 @@ export function App() {
   const [documentEditorTitle, setDocumentEditorTitle] = useState('');
   const [documentEditorBody, setDocumentEditorBody] = useState<DocumentDetailRecord['document']['body']>([]);
   const [spaceDocuments, setSpaceDocuments] = useState<DocumentRecord[]>([]);
+  const [documentDefinitionDocuments, setDocumentDefinitionDocuments] = useState<DocumentRecord[]>([]);
   const [savedViews, setSavedViews] = useState<SavedViewRecord[]>([]);
   const [activeSavedViewId, setActiveSavedViewId] = useState<string | null>(null);
   const [tableLensDraft, setTableLensDraft] = useState<StructuredViewDraft>(() =>
@@ -306,6 +307,11 @@ export function App() {
     groups,
   });
   const selectedGroup = activeSubspace.group;
+  const groupById = useMemo(() => new Map(groups.map((group) => [group.id, group])), [groups]);
+  const groupSlugById = useMemo(
+    () => new Map(groups.map((group) => [group.id, group.slug])),
+    [groups],
+  );
   const selectedEntity = entities.find((entity) => entity.id === selectedEntityId) ?? null;
   const entityNodes = useMemo(() => nodes.filter(isCanvasEntityNode), [nodes]);
   const groupNodePositions = selectedSpaceId ? groupNodePositionsBySpaceId[selectedSpaceId] ?? {} : {};
@@ -326,8 +332,15 @@ export function App() {
   const selectedEntityUpdatedBy =
     selectedEntity ? memberByUserId.get(selectedEntity.updatedByUserId)?.user ?? null : null;
   const linkDefinitions = useMemo<DocumentLinkDefinition[]>(
-    () => Array.from(buildDocumentLinkDefinitionIndex(spaceDocuments).values()),
-    [spaceDocuments],
+    () =>
+      buildCrossSubspaceDocumentLinkDefinitions(
+        documentDefinitionDocuments.length > 0 ? documentDefinitionDocuments : spaceDocuments,
+        {
+          currentGroupId: activeSubspace.groupId,
+          groupSlugById,
+        },
+      ),
+    [activeSubspace.groupId, documentDefinitionDocuments, groupSlugById, spaceDocuments],
   );
   const linkedDocumentEntities = useMemo(() => {
     if (!documentEditorEntity) {
@@ -341,14 +354,16 @@ export function App() {
     return findMentionedEntities(documentEditorBody, entities)
       .filter((entity) => entity.id !== documentEditorEntity.id)
       .map((entity) => ({
-      entityId: entity.id,
-      label: entity.title,
-      anchorId: null,
-      title: entity.title,
-      summary: entity.summary,
-      entityTypeId: entity.entityTypeId,
-    }));
-  }, [documentDetail, documentEditorBody, documentEditorEntity, entities]);
+        entityId: entity.id,
+        label: entity.title,
+        anchorId: null,
+        title: entity.title,
+        summary: entity.summary,
+        entityTypeId: entity.entityTypeId,
+        groupId: entity.groupId ?? null,
+        groupSlug: entity.groupId ? groupSlugById.get(entity.groupId) ?? null : null,
+      }));
+  }, [documentDetail, documentEditorBody, documentEditorEntity, entities, groupSlugById]);
   const documentEditorDraft = useMemo(
     () => ({
       title: documentEditorTitle,
@@ -479,6 +494,7 @@ export function App() {
     setDocumentEditorTitle('');
     setDocumentEditorBody([]);
     setSpaceDocuments([]);
+    setDocumentDefinitionDocuments([]);
     setSavedViews([]);
     setActiveSavedViewId(null);
     setTableLensDraft(createDefaultTableDraft([]));
@@ -492,7 +508,7 @@ export function App() {
     appendLog('Сессия очищена');
   };
 
-  const withAction = async (label: string, task: () => Promise<void>) => {
+  const withAction = async (label: string, task: () => Promise<unknown>) => {
     setBusyLabel(label);
     try {
       await task();
@@ -615,6 +631,28 @@ export function App() {
     return response.items;
   };
 
+  const loadDocumentDefinitionDocuments = async (
+    activeToken: string,
+    spaceId: string,
+    groupList: GroupRecord[] = groups,
+  ) => {
+    const responses = await Promise.all([
+      canvasApi.listDocuments(activeToken, spaceId),
+      ...groupList.map((group) => canvasApi.listGroupDocuments(activeToken, group.id)),
+    ]);
+    const documentById = new Map<string, DocumentRecord>();
+
+    for (const response of responses) {
+      for (const document of response.items) {
+        documentById.set(document.id, document);
+      }
+    }
+
+    const items = Array.from(documentById.values());
+    setDocumentDefinitionDocuments(items);
+    return items;
+  };
+
   const loadSavedViews = async (
     activeToken: string,
     spaceId: string,
@@ -639,7 +677,8 @@ export function App() {
     setCanvasLoading(true);
 
     try {
-      const [entitiesResponse, relationsResponse, canvasResponse] = await Promise.all([
+      const [entitiesResponse, relationsResponse, canvasResponse, , documentsResponse] =
+        await Promise.all([
         groupId
           ? canvasApi.listGroupEntities(activeToken, groupId)
           : canvasApi.listEntities(activeToken, spaceId),
@@ -659,6 +698,12 @@ export function App() {
         canvasResponse,
         focusEntityId,
       );
+
+      return {
+        entities: entitiesResponse.items,
+        relations: relationsResponse.items,
+        documents: documentsResponse,
+      };
     } finally {
       setCanvasLoading(false);
     }
@@ -806,6 +851,30 @@ export function App() {
 
       throw error;
     }
+  };
+
+  const navigateToEntityContext = async (
+    activeToken: string,
+    entityId: string,
+    targetGroupId: string | null,
+  ) => {
+    if (!selectedSpaceId) {
+      throw new Error('Не удалось определить текущее пространство для перехода по ссылке');
+    }
+
+    if (targetGroupId !== activeSubspace.groupId) {
+      setSelectedGroupId(targetGroupId);
+      await loadCanvas(activeToken, selectedSpaceId, entityId, targetGroupId);
+      appendLog(
+        targetGroupId
+          ? `Переход в group: ${groupById.get(targetGroupId)?.slug ?? targetGroupId}`
+          : 'Переход в root-контекст пространства',
+      );
+    } else {
+      selectEntityOnCanvas(entityId);
+    }
+
+    return canvasApi.getEntity(activeToken, entityId);
   };
 
   const persistLayout = async (reason: string) => {
@@ -1089,6 +1158,29 @@ export function App() {
         setDocumentBacklinks([]);
       });
   }, [selectedEntityId, token]);
+
+  useEffect(() => {
+    if (!token || !selectedSpaceId || !documentEditorEntityId) {
+      setDocumentDefinitionDocuments([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    void loadDocumentDefinitionDocuments(token, selectedSpaceId).catch((error) => {
+      if (cancelled) {
+        return;
+      }
+
+      const message = error instanceof Error ? error.message : 'Не удалось загрузить cross-subspace ссылки';
+      appendLog(message);
+      setDocumentDefinitionDocuments([]);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [documentEditorEntityId, groups, selectedSpaceId, token]);
 
   useEffect(() => {
     setEntityTypeDraft(buildEntityTypeDraft(activeSchemaType));
@@ -1423,6 +1515,7 @@ export function App() {
       await refreshWorkspaceActivity();
       appendLog(`Р”РѕРєСѓРјРµРЅС‚ СЃРѕС…СЂР°РЅС‘РЅ: ${detail.document.title}`);
       await refreshCanvasDataPreservingLayout(token, selectedSpaceId, documentEditorEntity.id);
+      await loadDocumentDefinitionDocuments(token, selectedSpaceId);
 
       if (selectedEntityId === documentEditorEntity.id) {
         const backlinks = await canvasApi.listDocumentBacklinks(token, documentEditorEntity.id);
@@ -1533,7 +1626,7 @@ export function App() {
         const detail = await canvasApi.getDocument(token, documentId);
         const ownerEntityId = getEntityDocumentOwnerEntityId(detail);
         const ownerEntity = ownerEntityId
-          ? entities.find((item) => item.id === ownerEntityId) ?? null
+          ? await canvasApi.getEntity(token, ownerEntityId)
           : null;
 
         if (!ownerEntity) {
@@ -1549,10 +1642,11 @@ export function App() {
     });
   };
 
-  const openEntityDocumentWithAutosave = (entityId: string) => {
-    const entity = entities.find((item) => item.id === entityId);
-
-    if (!token || !entity) {
+  const openEntityDocumentWithAutosave = (
+    entityId: string,
+    targetGroupId: string | null = activeSubspace.groupId,
+  ) => {
+    if (!token) {
       return;
     }
 
@@ -1566,15 +1660,21 @@ export function App() {
         await persistOpenDocument();
       }
 
-      selectEntityOnCanvas(entityId);
-      setDocumentEditorEntityId(entityId);
       setDocumentDetail(null);
       setDocumentEditorDocumentId(null);
-      setDocumentEditorTitle(entity.title);
+      setDocumentEditorTitle('');
       setDocumentEditorBody([]);
       setDocumentLoading(true);
 
       try {
+        const entity =
+          targetGroupId === activeSubspace.groupId
+            ? entities.find((item) => item.id === entityId) ??
+              (await navigateToEntityContext(token, entityId, targetGroupId))
+            : await navigateToEntityContext(token, entityId, targetGroupId);
+
+        setDocumentEditorEntityId(entity.id);
+        setDocumentEditorTitle(entity.title);
         const detail = await resolveEntityDocument(token, entity);
         hydrateDocumentEditor(detail, entity);
       } finally {
@@ -1595,7 +1695,7 @@ export function App() {
     closeEntityDocument();
   };
 
-  const openDocumentFromBacklinkWithAutosave = (documentId: string) => {
+  const openDocumentFromBacklinkWithAutosave = (backlink: DocumentBacklinkRecord) => {
     if (!token) {
       return;
     }
@@ -1603,7 +1703,7 @@ export function App() {
     void withAction('РћС‚РєСЂС‹С‚РёРµ СЃРІСЏР·Р°РЅРЅРѕРіРѕ РґРѕРєСѓРјРµРЅС‚Р°', async () => {
       if (
         documentEditorEntity &&
-        documentEditorDocumentId !== documentId &&
+        documentEditorDocumentId !== backlink.documentId &&
         documentEditorDirty &&
         selectedSpaceId
       ) {
@@ -1617,11 +1717,12 @@ export function App() {
       setDocumentLoading(true);
 
       try {
-        const detail = await canvasApi.getDocument(token, documentId);
-        const ownerEntityId = getEntityDocumentOwnerEntityId(detail);
-        const ownerEntity = ownerEntityId
-          ? entities.find((item) => item.id === ownerEntityId) ?? null
-          : null;
+        const ownerEntity = await navigateToEntityContext(
+          token,
+          backlink.sourceEntityId,
+          backlink.sourceGroupId,
+        );
+        const detail = await canvasApi.getDocument(token, backlink.documentId);
 
         if (!ownerEntity) {
           throw new Error('РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ Р·Р°РїРёСЃСЊ, РєРѕС‚РѕСЂРѕР№ РїСЂРёРЅР°РґР»РµР¶РёС‚ РґРѕРєСѓРјРµРЅС‚');
@@ -2723,7 +2824,7 @@ export function App() {
                         key={`${backlink.documentId}-${backlink.anchorId ?? 'root'}`}
                         type="button"
                         className="entity-preview-card"
-                        onClick={() => openDocumentFromBacklinkWithAutosave(backlink.documentId)}
+                        onClick={() => openDocumentFromBacklinkWithAutosave(backlink)}
                       >
                         <strong>{backlink.documentTitle}</strong>
                         <span>{backlink.previewText}</span>
@@ -2956,8 +3057,11 @@ export function App() {
         busy={!token || !selectedSpaceId || !!busyLabel || !canEditSelectedWorkspace}
         onClose={closeEntityDocumentWithAutosave}
         onSave={() => void saveEntityDocument()}
-        onOpenEntity={(entityId) => {
-          openEntityDocumentWithAutosave(entityId);
+        onOpenEntity={(entityId, groupId) => {
+          openEntityDocumentWithAutosave(entityId, groupId);
+        }}
+        onOpenBacklink={(backlink) => {
+          openDocumentFromBacklinkWithAutosave(backlink);
         }}
         onDraftChange={(draft) => {
           setDocumentEditorTitle(draft.title);

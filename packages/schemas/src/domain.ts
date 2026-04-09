@@ -564,11 +564,14 @@ export const documentEntityReferenceSchema = z.object({
   kind: z
     .enum(['entity_mention', 'document_link_definition', 'document_link_usage'])
     .optional(),
-  linkKey: z.string().trim().min(1).max(64).nullable().optional(),
+  linkKey: z.string().trim().min(1).max(129).nullable().optional(),
+  definitionKey: z.string().trim().min(1).max(64).nullable().optional(),
   linkText: z.string().nullable().optional(),
   linkMode: z.enum(['static', 'sync']).nullable().optional(),
   sourceDocumentId: idSchema.nullable().optional(),
   sourceBlockId: z.string().trim().min(1).max(128).nullable().optional(),
+  sourceGroupId: idSchema.nullable().optional(),
+  sourceGroupSlug: slugSchema.nullable().optional(),
 });
 
 export const documentBlockSchema = z.object({
@@ -600,6 +603,8 @@ export const documentEntityPreviewSchema = z.object({
   title: z.string().trim().min(1).max(200),
   summary: z.string().max(4000).nullable(),
   entityTypeId: idSchema.nullable(),
+  groupId: idSchema.nullable(),
+  groupSlug: slugSchema.nullable(),
 });
 
 export const documentDetailRecordSchema = z.object({
@@ -623,6 +628,8 @@ export const documentBacklinkRecordSchema = z.object({
   anchorId: z.string().nullable(),
   previewText: z.string().max(4000),
   updatedAt: z.string().min(1),
+  sourceGroupId: idSchema.nullable(),
+  sourceGroupSlug: slugSchema.nullable(),
 });
 
 export const createDocumentRequestSchema = z.object({

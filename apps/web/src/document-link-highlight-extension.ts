@@ -3,16 +3,14 @@ import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { Plugin, TextSelection } from '@tiptap/pm/state';
 import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view';
 import type { DocumentLinkDefinition } from '@ryba/types';
+import { escapeRegExp, extractDocumentLinkTokens } from './document-link-runtime';
 
-const DOCUMENT_LINK_PATTERN = /([A-Za-z][A-Za-z0-9_-]{0,63})(\*\*[\s\S]*?\*\*|\$\$[\s\S]*?\$\$)/g;
 const ENTITY_MENTION_PATTERN = /\[\[entity:[^\]|]+(?:\|[^\]]+)?\]\]/g;
 
 interface DocumentLinkHighlightOptions {
   getCurrentDocumentId: () => string | null;
   getDefinitions: () => Map<string, DocumentLinkDefinition>;
 }
-
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const intersectsSelection = (
   start: number,
@@ -73,18 +71,11 @@ const buildDecorations = (
 
     const occupiedRanges: Array<{ start: number; end: number }> = [];
 
-    for (const match of node.text.matchAll(DOCUMENT_LINK_PATTERN)) {
-      const value = match[0];
-      const start = match.index ?? -1;
-
-      if (!value || start < 0) {
-        continue;
-      }
-
-      const from = pos + start;
-      const to = from + value.length;
+    for (const token of extractDocumentLinkTokens(node.text)) {
+      const from = pos + token.start;
+      const to = from + token.raw.length;
       const isActive = intersectsSelection(from, to, selectionFrom, selectionTo);
-      occupiedRanges.push({ start, end: start + value.length });
+      occupiedRanges.push({ start: token.start, end: token.end });
       decorations.push(
         Decoration.inline(from, to, {
           class: `document-editor__link-token${isActive ? ' is-active' : ''}`,
@@ -101,7 +92,7 @@ const buildDecorations = (
 
     for (const definition of definitions) {
       const pattern = new RegExp(
-        `(^|[^A-Za-z0-9_-])(${escapeRegExp(definition.key)})\\b(?!\\*\\*|\\$\\$)`,
+        `(^|[^A-Za-z0-9_.-])(${escapeRegExp(definition.key)})\\b(?!\\*\\*|\\$\\$)`,
         'g',
       );
 

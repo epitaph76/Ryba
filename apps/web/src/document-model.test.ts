@@ -1,5 +1,7 @@
+import type { DocumentRecord } from '@ryba/types';
 import { describe, expect, it } from 'vitest';
 
+import { buildCrossSubspaceDocumentLinkDefinitions } from './document-link-runtime';
 import {
   buildDocumentPreviewText,
   buildEditorHtmlFromBlocks,
@@ -110,12 +112,15 @@ describe('document-model', () => {
         linkDefinitions: [
           {
             key: 'shared_block',
+            definitionKey: 'shared_block',
             mode: 'static',
             text: 'Canonical copy',
             sourceDocumentId: 'doc-source',
             sourceEntityId: 'ent-source',
             sourceBlockId: 'block-source',
             sourceTitle: 'Source note',
+            sourceGroupId: null,
+            sourceGroupSlug: null,
           },
         ],
       },
@@ -132,10 +137,13 @@ describe('document-model', () => {
           anchorId: 'block-source',
           kind: 'document_link_usage',
           linkKey: 'shared_block',
+          definitionKey: 'shared_block',
           linkText: 'Canonical copy',
           linkMode: 'static',
           sourceDocumentId: 'doc-source',
           sourceBlockId: 'block-source',
+          sourceGroupId: null,
+          sourceGroupSlug: null,
         },
       ],
     });
@@ -209,4 +217,102 @@ describe('document-model', () => {
     expect(buildDocumentPreviewText(blocks)).toContain('Static copy');
     expect(buildDocumentPreviewText(blocks)).toContain('Synced copy');
   });
+
+  it('resolves qualified keys from another subspace without creating a local definition', () => {
+    const definitionDocuments: DocumentRecord[] = [
+      createDefinitionDocument({
+        id: 'doc-root',
+        entityId: 'ent-root',
+        title: 'Root source',
+        groupId: null,
+        blockId: 'root-definition',
+        key: 'shared_note',
+        text: 'Root canonical',
+      }),
+      createDefinitionDocument({
+        id: 'doc-group',
+        entityId: 'ent-group',
+        title: 'Group source',
+        groupId: 'group-1',
+        blockId: 'group-definition',
+        key: 'shared_note',
+        text: 'Group canonical',
+      }),
+    ];
+    const definitions = buildCrossSubspaceDocumentLinkDefinitions(definitionDocuments, {
+      currentGroupId: 'group-1',
+      groupSlugById: new Map([['group-1', 'delivery']]),
+    });
+    const blocks = serializeEditorDocument(
+      {
+        type: 'doc',
+        content: [
+          {
+            type: 'paragraph',
+            content: [{ type: 'text', text: 'Compare root.shared_note and shared_note.' }],
+          },
+        ],
+      },
+      {
+        currentDocumentId: 'doc-consumer',
+        ownerEntityId: 'ent-consumer',
+        linkDefinitions: definitions,
+      },
+    );
+
+    expect(blocks[0]?.text).toBe('Compare root.shared_note and shared_note.');
+    expect(blocks[0]?.entityReferences).toEqual([
+      expect.objectContaining({
+        kind: 'document_link_usage',
+        linkKey: 'root.shared_note',
+        definitionKey: 'shared_note',
+        entityId: 'ent-root',
+        sourceGroupId: null,
+        sourceGroupSlug: null,
+      }),
+      expect.objectContaining({
+        kind: 'document_link_usage',
+        linkKey: 'shared_note',
+        definitionKey: 'shared_note',
+        entityId: 'ent-group',
+        sourceGroupId: 'group-1',
+        sourceGroupSlug: 'delivery',
+      }),
+    ]);
+    expect(
+      blocks[0]?.entityReferences.some((reference) => reference.kind === 'document_link_definition'),
+    ).toBe(false);
+  });
+});
+
+const createDefinitionDocument = (
+  input: {
+    id: string;
+    entityId: string;
+    title: string;
+    groupId: string | null;
+    blockId: string;
+    key: string;
+    text: string;
+  },
+): DocumentRecord => ({
+  id: input.id,
+  workspaceId: 'ws-1',
+  spaceId: 'space-1',
+  groupId: input.groupId,
+  entityId: input.entityId,
+  title: input.title,
+  previewText: input.text,
+  createdByUserId: 'user-1',
+  updatedByUserId: 'user-1',
+  createdAt: '2026-04-09T00:00:00.000Z',
+  updatedAt: '2026-04-09T00:00:00.000Z',
+  body: [
+    {
+      id: input.blockId,
+      kind: 'paragraph',
+      text: `${input.key}**${input.text}**`,
+      entityReferences: [],
+    },
+  ],
 });

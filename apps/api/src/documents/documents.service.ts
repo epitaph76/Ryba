@@ -14,7 +14,7 @@ import {
   upsertEntityDocumentRequestSchema,
 } from '@ryba/schemas';
 import {
-  buildDocumentLinkDefinitionIndex,
+  buildCrossSubspaceDocumentLinkDefinitions,
   buildDocumentLinkToken,
   createDocumentLinkDefinitionReference,
   createDocumentLinkUsageReference,
@@ -23,6 +23,7 @@ import {
   isDocumentLinkDefinitionReference,
   isDocumentLinkUsageReference,
   replaceDocumentLinkTokensForPreview,
+  ROOT_DOCUMENT_LINK_QUALIFIER,
 } from '@ryba/types';
 import type {
   DocumentBacklinkRecord,
@@ -42,7 +43,7 @@ import {
   toDocumentRecord,
   toEntityRecord,
 } from '../db/mappers';
-import { documentEntityMentions, documents, entities, relations, spaces } from '../db/schema';
+import { documentEntityMentions, documents, entities, groups, relations, spaces } from '../db/schema';
 import { EntityTypesService } from '../entity-types/entity-types.service';
 import { GroupsService } from '../groups/groups.service';
 import { WorkspaceActivityService } from '../workspaces/workspace-activity.service';
@@ -200,7 +201,14 @@ export class DocumentsService {
       .where(eq(documentEntityMentions.entityId, entity.id))
       .orderBy(desc(documents.updatedAt), asc(documentEntityMentions.createdAt));
 
-    return rows.map((row) => toDocumentBacklinkRecord(row.mention, toDocumentRecord(row.document)));
+    const groupSlugById = await this.loadGroupSlugById(entity.spaceId);
+
+    return rows.map((row) =>
+      toDocumentBacklinkRecord(row.mention, {
+        ...toDocumentRecord(row.document),
+        sourceGroupSlug: row.document.groupId ? groupSlugById.get(row.document.groupId) ?? null : null,
+      }),
+    );
   }
 
   private async listDocumentsInScope(
@@ -431,13 +439,12 @@ export class DocumentsService {
     documentId: string;
     body: DocumentBlock[];
   }) {
-    const documentsInSpace = await this.listSpaceDocuments(
+    const definitionMap = await this.loadDocumentLinkDefinitionMap(
       input.workspaceId,
       input.spaceId,
       input.groupId,
       input.documentId,
     );
-    const definitionMap = buildDocumentLinkDefinitionIndex(documentsInSpace);
 
     return input.body.map((block) => {
       if (block.kind === 'entity_reference') {
@@ -485,12 +492,17 @@ export class DocumentsService {
           definitionMap.get(token.key);
 
         if (!definition) {
+          if (token.qualifier !== null) {
+            throwInvalidQualifiedDocumentLink(block.id, token.key);
+          }
+
           nextText += token.raw;
           nextLinkReferences.push(
             createDocumentLinkDefinitionReference({
               entityId: input.ownerEntityId,
               blockId: block.id,
               key: token.key,
+              definitionKey: token.definitionKey,
               mode: token.mode,
               text: existingDefinitionsByKey.get(token.key)?.linkText ?? token.text,
               documentId: input.documentId,
@@ -517,10 +529,13 @@ export class DocumentsService {
           createDocumentLinkUsageReference({
             entityId: definition.sourceEntityId,
             key: definition.key,
+            definitionKey: definition.definitionKey,
             mode: definition.mode,
             text: nextTokenText,
             sourceDocumentId: definition.sourceDocumentId,
             sourceBlockId: definition.sourceBlockId,
+            sourceGroupId: definition.sourceGroupId,
+            sourceGroupSlug: definition.sourceGroupSlug,
           }),
         );
         cursor = token.end;
@@ -533,12 +548,21 @@ export class DocumentsService {
           createDocumentLinkUsageReference({
             entityId: definition.sourceEntityId,
             key: definition.key,
+            definitionKey: definition.definitionKey,
             mode: 'static',
             text: definition.text,
             sourceDocumentId: definition.sourceDocumentId,
             sourceBlockId: definition.sourceBlockId,
+            sourceGroupId: definition.sourceGroupId,
+            sourceGroupSlug: definition.sourceGroupSlug,
           }),
         );
+      }
+
+      const unresolvedQualifiedKeys = findUnresolvedQualifiedLinkKeys(originalText, definitionMap);
+
+      if (unresolvedQualifiedKeys.length > 0) {
+        throwInvalidQualifiedDocumentLink(block.id, unresolvedQualifiedKeys[0]!);
       }
 
       const nextReferences = [...nonLinkReferences, ...nextLinkReferences];
@@ -568,13 +592,12 @@ export class DocumentsService {
       body: DocumentBlock[];
     },
   ) {
-    const documentsInSpace = await this.listSpaceDocuments(
+    const definitionMap = await this.loadDocumentLinkDefinitionMap(
       input.workspaceId,
       input.spaceId,
       input.groupId,
       input.documentId,
     );
-    const definitionMap = buildDocumentLinkDefinitionIndex(documentsInSpace);
     const syncEdits = new Map<
       string,
       {
@@ -616,7 +639,7 @@ export class DocumentsService {
           continue;
         }
 
-        syncEdits.set(`${definition.sourceDocumentId}:${definition.key}`, {
+        syncEdits.set(`${definition.sourceDocumentId}:${definition.definitionKey}`, {
           definition,
           nextText,
         });
@@ -697,20 +720,25 @@ export class DocumentsService {
       return [];
     }
 
-    const rows = await db
-      .select()
-      .from(entities)
-      .where(
-        and(
-          eq(entities.workspaceId, document.workspaceId),
-          eq(entities.spaceId, document.spaceId),
-          document.groupId ? eq(entities.groupId, document.groupId) : isNull(entities.groupId),
-          inArray(entities.id, entityIds),
+    const [rows, groupSlugById] = await Promise.all([
+      db
+        .select()
+        .from(entities)
+        .where(
+          and(
+            eq(entities.workspaceId, document.workspaceId),
+            eq(entities.spaceId, document.spaceId),
+            inArray(entities.id, entityIds),
+          ),
         ),
-      );
+      this.loadGroupSlugById(document.spaceId),
+    ]);
 
     return rows.map((row) =>
-      toDocumentEntityPreview(uniqueMentions.get(row.id)!, toEntityRecord(row)),
+      toDocumentEntityPreview(uniqueMentions.get(row.id)!, {
+        ...toEntityRecord(row),
+        groupSlug: row.groupId ? groupSlugById.get(row.groupId) ?? null : null,
+      }),
     );
   }
 
@@ -747,10 +775,10 @@ export class DocumentsService {
         and(
           eq(entities.workspaceId, entity.workspaceId),
           eq(entities.spaceId, entity.spaceId),
-          entity.groupId ? eq(entities.groupId, entity.groupId) : isNull(entities.groupId),
           inArray(entities.id, uniqueEntityIds),
         ),
       );
+    const rowById = new Map(rows.map((row) => [row.id, row]));
 
     if (rows.length !== uniqueEntityIds.length) {
       throw new ApiException(
@@ -758,6 +786,22 @@ export class DocumentsService {
         'VALIDATION_ERROR',
         'Document mentions must reference existing entities in the same space and group context',
       );
+    }
+
+    for (const mention of mentions) {
+      if (mention.referenceKind !== 'entity_mention') {
+        continue;
+      }
+
+      const target = rowById.get(mention.entityId);
+
+      if (!target || (target.groupId ?? null) !== (entity.groupId ?? null)) {
+        throw new ApiException(
+          HttpStatus.BAD_REQUEST,
+          'VALIDATION_ERROR',
+          'Entity mentions must stay inside the current subspace context',
+        );
+      }
     }
 
     return mentions.filter((mention) => mention.entityId !== entity.id);
@@ -886,7 +930,6 @@ export class DocumentsService {
   private async listSpaceDocuments(
     workspaceId: string,
     spaceId: string,
-    groupId: string | null,
     excludeDocumentId?: string,
   ): Promise<DocumentRecord[]> {
     const db = this.getDb();
@@ -897,7 +940,6 @@ export class DocumentsService {
         and(
           eq(documents.workspaceId, workspaceId),
           eq(documents.spaceId, spaceId),
-          groupId ? eq(documents.groupId, groupId) : isNull(documents.groupId),
         ),
       )
       .orderBy(desc(documents.updatedAt), asc(documents.createdAt));
@@ -905,6 +947,38 @@ export class DocumentsService {
     return rows
       .map(toDocumentRecord)
       .filter((document) => document.id !== excludeDocumentId);
+  }
+
+  private async loadDocumentLinkDefinitionMap(
+    workspaceId: string,
+    spaceId: string,
+    currentGroupId: string | null,
+    excludeDocumentId?: string,
+  ) {
+    const [documentsInSpace, groupSlugById] = await Promise.all([
+      this.listSpaceDocuments(workspaceId, spaceId, excludeDocumentId),
+      this.loadGroupSlugById(spaceId),
+    ]);
+
+    return new Map(
+      buildCrossSubspaceDocumentLinkDefinitions(documentsInSpace, {
+        currentGroupId,
+        groupSlugById,
+      }).map((definition) => [definition.key, definition]),
+    );
+  }
+
+  private async loadGroupSlugById(spaceId: string) {
+    const db = this.getDb();
+    const rows = await db
+      .select({
+        id: groups.id,
+        slug: groups.slug,
+      })
+      .from(groups)
+      .where(eq(groups.spaceId, spaceId));
+
+    return new Map(rows.map((row) => [row.id, row.slug]));
   }
 
   private async updateLinkDefinitionText(
@@ -929,15 +1003,20 @@ export class DocumentsService {
         block.entityReferences.some(
           (reference) =>
             reference.kind === 'document_link_definition' &&
-            reference.linkKey === definition.key,
+            (reference.definitionKey ?? reference.linkKey) === definition.definitionKey,
         ) ||
-        (block.text ?? '').includes(definition.key);
+        (block.text ?? '').includes(definition.definitionKey);
 
       if (!targetsDefinition) {
         return block;
       }
 
-      const text = replaceLinkTokenText(block.text ?? '', definition.key, definition.mode, nextText);
+      const text = replaceLinkTokenText(
+        block.text ?? '',
+        definition.definitionKey,
+        definition.mode,
+        nextText,
+      );
 
       if (text === (block.text ?? '')) {
         return block;
@@ -945,7 +1024,8 @@ export class DocumentsService {
 
       definitionUpdated = true;
       const entityReferences = block.entityReferences.map((reference) =>
-        reference.kind === 'document_link_definition' && reference.linkKey === definition.key
+        reference.kind === 'document_link_definition' &&
+        (reference.definitionKey ?? reference.linkKey) === definition.definitionKey
           ? {
               ...reference,
               linkText: nextText,
@@ -1101,7 +1181,7 @@ const replaceMentionTokens = (text: string, references: DocumentEntityReference[
     }
 
     const pattern = new RegExp(
-      `(^|[^A-Za-z0-9_-])(${escapeRegExp(reference.linkKey)})\\b(?!\\*\\*|\\$\\$)`,
+      `(^|[^A-Za-z0-9_.-])(${escapeRegExp(reference.linkKey)})\\b(?!\\*\\*|\\$\\$)`,
       'g',
     );
 
@@ -1136,7 +1216,7 @@ const replaceBareLinkKeysFromDefinitions = (
 
   for (const definition of definitions) {
     const pattern = new RegExp(
-      `(^|[^A-Za-z0-9_-])(${escapeRegExp(definition.key)})\\b(?!\\*\\*|\\$\\$)`,
+      `(^|[^A-Za-z0-9_.-])(${escapeRegExp(definition.key)})\\b(?!\\*\\*|\\$\\$)`,
       'g',
     );
 
@@ -1173,7 +1253,7 @@ const findStaticBareUsageDefinitions = (
 
   for (const definition of definitions) {
     const pattern = new RegExp(
-      `(^|[^A-Za-z0-9_-])(${escapeRegExp(definition.key)})\\b(?!\\*\\*|\\$\\$)`,
+      `(^|[^A-Za-z0-9_.-])(${escapeRegExp(definition.key)})\\b(?!\\*\\*|\\$\\$)`,
       'g',
     );
 
@@ -1232,6 +1312,7 @@ const resolveDefinitionFromReference = (
     for (const definition of definitionMap.values()) {
       if (
         definition.sourceDocumentId === reference.sourceDocumentId &&
+        (!reference.definitionKey || definition.definitionKey === reference.definitionKey) &&
         (!reference.linkKey || definition.key === reference.linkKey)
       ) {
         return definition;
@@ -1240,6 +1321,60 @@ const resolveDefinitionFromReference = (
   }
 
   return reference.linkKey ? definitionMap.get(reference.linkKey) ?? null : null;
+};
+
+const QUALIFIED_DOCUMENT_LINK_USAGE_PATTERN =
+  /(^|[^A-Za-z0-9_.-])((?:[a-z0-9]+(?:-[a-z0-9]+)*)\.[A-Za-z][A-Za-z0-9_-]{0,63})\b(?!\*\*|\$\$)/g;
+
+const findUnresolvedQualifiedLinkKeys = (
+  text: string,
+  definitionMap: Map<string, DocumentLinkDefinition>,
+) => {
+  const occupiedRanges = extractDocumentLinkTokens(text).map((token) => ({
+    start: token.start,
+    end: token.end,
+  }));
+  const unresolved = new Set<string>();
+
+  for (const match of text.matchAll(QUALIFIED_DOCUMENT_LINK_USAGE_PATTERN)) {
+    const prefix = match[1] ?? '';
+    const key = match[2];
+    const matchIndex = match.index ?? -1;
+
+    if (!key || matchIndex < 0) {
+      continue;
+    }
+
+    const start = matchIndex + prefix.length;
+    const end = start + key.length;
+    const overlaps = occupiedRanges.some((range) => start < range.end && end > range.start);
+
+    if (overlaps) {
+      continue;
+    }
+
+    occupiedRanges.push({ start, end });
+
+    if (!definitionMap.has(key)) {
+      unresolved.add(key);
+    }
+  }
+
+  return Array.from(unresolved);
+};
+
+const throwInvalidQualifiedDocumentLink = (blockId: string, key: string): never => {
+  const qualifier = key.split('.', 1)[0] ?? ROOT_DOCUMENT_LINK_QUALIFIER;
+  const message =
+    qualifier === ROOT_DOCUMENT_LINK_QUALIFIER
+      ? `Qualified document link "${key}" must reference an existing root-space definition`
+      : `Qualified document link "${key}" must reference an existing document link in group "${qualifier}"`;
+
+  throw new ApiException(HttpStatus.BAD_REQUEST, 'VALIDATION_ERROR', message, {
+    blockId,
+    linkKey: key,
+    scope: qualifier,
+  });
 };
 
 const extractSourceDocumentId = (value: unknown) => {

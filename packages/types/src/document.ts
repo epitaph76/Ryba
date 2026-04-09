@@ -11,10 +11,13 @@ export interface DocumentEntityReference {
   anchorId: string | null;
   kind?: 'entity_mention' | 'document_link_definition' | 'document_link_usage';
   linkKey?: string | null;
+  definitionKey?: string | null;
   linkText?: string | null;
   linkMode?: DocumentLinkMode | null;
   sourceDocumentId?: DocumentId | null;
   sourceBlockId?: string | null;
+  sourceGroupId?: GroupId | null;
+  sourceGroupSlug?: string | null;
 }
 
 export interface DocumentBlock {
@@ -46,6 +49,8 @@ export interface DocumentEntityPreview {
   title: string;
   summary: string | null;
   entityTypeId: EntityTypeId | null;
+  groupId: GroupId | null;
+  groupSlug: string | null;
 }
 
 export interface DocumentDetailRecord {
@@ -69,4 +74,6 @@ export interface DocumentBacklinkRecord {
   anchorId: string | null;
   previewText: string;
   updatedAt: string;
+  sourceGroupId: GroupId | null;
+  sourceGroupSlug: string | null;
 }

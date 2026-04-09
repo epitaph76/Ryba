@@ -23,7 +23,8 @@ interface EntityDocumentDialogProps {
   busy: boolean;
   onClose: () => void;
   onSave: () => void;
-  onOpenEntity: (entityId: string) => void;
+  onOpenEntity: (entityId: string, groupId: string | null) => void;
+  onOpenBacklink: (backlink: DocumentBacklinkRecord) => void;
   onDraftChange: (draft: DocumentDraft) => void;
 }
 
@@ -42,6 +43,7 @@ export function EntityDocumentDialog({
   onClose,
   onSave,
   onOpenEntity,
+  onOpenBacklink,
   onDraftChange,
 }: EntityDocumentDialogProps) {
   useEffect(() => {
@@ -119,20 +121,23 @@ export function EntityDocumentDialog({
             <section className="panel">
               <div className="panel__header">
                 <h2>Как ссылаться</h2>
-                <span>3 способа</span>
+                <span>4 правила</span>
               </div>
               <p className="panel__hint">
                 1. Старую ссылку на сущность всё ещё можно вставить из списка сверху.
               </p>
               <p className="panel__hint">
-                2. В исходном документе задай определение как `link_name**какой то текст**`
-                или `link_name$$какой то текст$$`.
+                2. В исходном документе задай определение как `link_name**какой-то текст**`
+                или `link_name$$какой-то текст$$`.
               </p>
               <p className="panel__hint">
-                3. В другом документе просто напиши `link_name`. Редактор сам развернёт его
-                в полный токен. Вариант `**...**` всегда подтягивается из исходника как
-                неизменяемая копия, а `$$...$$` можно править, и после сохранения эти правки
-                уйдут обратно в исходный документ.
+                3. В другом документе внутри того же подпроcтранства просто напиши
+                `link_name`. Редактор развернёт его в полный токен.
+              </p>
+              <p className="panel__hint">
+                4. Для явной межгрупповой ссылки используй `root.link_name` или
+                `group-slug.link_name`. Обычный `link_name` по-прежнему ищется только в
+                текущем подпроcтранстве.
               </p>
             </section>
 
@@ -145,8 +150,8 @@ export function EntityDocumentDialog({
                 <p className="panel__hint">Загружаю связанные записи...</p>
               ) : linkedEntities.length === 0 ? (
                 <p className="panel__hint">
-                  Пока нет ссылок. Добавь ссылку в текст и после сохранения появится связь
-                  между нодами.
+                  Пока нет ссылок. Добавь ссылку в текст и после сохранения появится
+                  связь между нодами.
                 </p>
               ) : (
                 <div className="document-preview-list">
@@ -155,10 +160,13 @@ export function EntityDocumentDialog({
                       key={item.entityId}
                       type="button"
                       className="entity-preview-card"
-                      onClick={() => onOpenEntity(item.entityId)}
+                      onClick={() => onOpenEntity(item.entityId, item.groupId)}
                     >
                       <strong>{item.title}</strong>
-                      <span>{item.summary ?? item.label ?? 'Без описания'}</span>
+                      <span>
+                        {item.summary ?? item.label ?? 'Без описания'}
+                        {item.groupSlug ? ` • ${item.groupSlug}` : ' • root'}
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -181,10 +189,13 @@ export function EntityDocumentDialog({
                       key={`${backlink.documentId}-${backlink.anchorId ?? 'root'}`}
                       type="button"
                       className="entity-preview-card"
-                      onClick={() => onOpenEntity(backlink.sourceEntityId)}
+                      onClick={() => onOpenBacklink(backlink)}
                     >
                       <strong>{backlink.documentTitle}</strong>
-                      <span>{backlink.previewText}</span>
+                      <span>
+                        {backlink.previewText}
+                        {backlink.sourceGroupSlug ? ` • ${backlink.sourceGroupSlug}` : ' • root'}
+                      </span>
                     </button>
                   ))}
                 </div>
