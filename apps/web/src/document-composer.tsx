@@ -46,6 +46,21 @@ interface DocumentComposerProps {
   onBodyChange: (value: DocumentBlock[]) => void;
 }
 
+const DOCUMENT_PLACEHOLDER =
+  '\u041f\u0438\u0448\u0438\u0442\u0435 \u0442\u0435\u043a\u0441\u0442 \u043a\u0430\u043a \u043e\u0431\u044b\u0447\u043d\u043e. \u0414\u043b\u044f \u0441\u0441\u044b\u043b\u043a\u0438 \u043d\u0430 \u0441\u0443\u0449\u043d\u043e\u0441\u0442\u044c \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0439\u0442\u0435 \u043a\u043d\u043e\u043f\u043a\u0443 "\u0412\u0441\u0442\u0430\u0432\u0438\u0442\u044c \u0441\u0441\u044b\u043b\u043a\u0443".';
+const TITLE_LABEL =
+  '\u041d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442\u0430';
+const BOLD_LABEL = '\u0416\u0438\u0440\u043d\u044b\u0439';
+const ITALIC_LABEL = '\u041a\u0443\u0440\u0441\u0438\u0432';
+const HEADING_LABEL = '\u0417\u0430\u0433\u043e\u043b\u043e\u0432\u043e\u043a';
+const MENTION_LABEL =
+  '\u0421\u0441\u044b\u043b\u043a\u0430 \u043d\u0430 \u0441\u0443\u0449\u043d\u043e\u0441\u0442\u044c';
+const NO_ENTITIES_LABEL =
+  '\u041d\u0435\u0442 \u0441\u0443\u0449\u043d\u043e\u0441\u0442\u0435\u0439';
+const INSERT_LINK_LABEL =
+  '\u0412\u0441\u0442\u0430\u0432\u0438\u0442\u044c \u0441\u0441\u044b\u043b\u043a\u0443';
+const CURRENT_USER_SUFFIX = '(\u0432\u044b)';
+
 export function DocumentComposer({
   currentDocumentId,
   ownerEntityId,
@@ -179,8 +194,7 @@ export function DocumentComposer({
         : []),
       linkHighlightExtension,
       Placeholder.configure({
-        placeholder:
-          'РЎРѕР±РµСЂРё РґРѕРєСѓРјРµРЅС‚ РІРѕРєСЂСѓРі РґР°РЅРЅС‹С…: С„РёРєСЃРёСЂСѓР№ С‚РµРєСЃС‚ РєР°Рє РѕР±С‹С‡РЅРѕ, Р° РґР»СЏ СЃСЃС‹Р»РѕРє РёСЃРїРѕР»СЊР·СѓР№ link_name, link_name**С‚РµРєСЃС‚** РёР»Рё link_name$$С‚РµРєСЃС‚$$.',
+        placeholder: DOCUMENT_PLACEHOLDER,
       }),
     ],
     [collaborationSession, linkHighlightExtension],
@@ -308,7 +322,7 @@ export function DocumentComposer({
         latestOnBodyChangeRef.current(nextBody);
       },
     },
-    [body, collaborationEnabled, currentDocumentId, effectiveDisabled, extensions],
+    [collaborationEnabled, effectiveDisabled, extensions],
   );
 
   useEffect(() => {
@@ -523,7 +537,7 @@ export function DocumentComposer({
                 >
                   {peer.initials}
                 </span>
-                <span>{peer.isCurrentUser ? `${peer.name} (you)` : peer.name}</span>
+                <span>{peer.isCurrentUser ? `${peer.name} ${CURRENT_USER_SUFFIX}` : peer.name}</span>
               </span>
             ))}
           </div>
@@ -537,7 +551,7 @@ export function DocumentComposer({
       ) : null}
 
       <label className="field">
-        <span>РќР°Р·РІР°РЅРёРµ РґРѕРєСѓРјРµРЅС‚Р°</span>
+        <span>{TITLE_LABEL}</span>
         <input
           type="text"
           value={title}
@@ -553,7 +567,7 @@ export function DocumentComposer({
           disabled={effectiveDisabled}
           onClick={() => editor?.chain().focus().toggleBold().run()}
         >
-          Р–РёСЂРЅС‹Р№
+          {BOLD_LABEL}
         </button>
         <button
           type="button"
@@ -561,7 +575,7 @@ export function DocumentComposer({
           disabled={effectiveDisabled}
           onClick={() => editor?.chain().focus().toggleItalic().run()}
         >
-          РљСѓСЂСЃРёРІ
+          {ITALIC_LABEL}
         </button>
         <button
           type="button"
@@ -569,16 +583,16 @@ export function DocumentComposer({
           disabled={effectiveDisabled}
           onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}
         >
-          Р—Р°РіРѕР»РѕРІРѕРє
+          {HEADING_LABEL}
         </button>
         <label className="document-editor__mention-picker">
-          <span>РЎСЃС‹Р»РєР° РЅР° СЃСѓС‰РЅРѕСЃС‚СЊ</span>
+          <span>{MENTION_LABEL}</span>
           <select
             value={mentionEntityId}
             disabled={effectiveDisabled || entities.length === 0}
             onChange={(event) => setMentionEntityId(event.target.value)}
           >
-            {entities.length === 0 ? <option value="">РќРµС‚ СЃСѓС‰РЅРѕСЃС‚РµР№</option> : null}
+            {entities.length === 0 ? <option value="">{NO_ENTITIES_LABEL}</option> : null}
             {entities.map((entity) => (
               <option key={entity.id} value={entity.id}>
                 {entity.title}
@@ -592,7 +606,7 @@ export function DocumentComposer({
           disabled={effectiveDisabled || !canInsertMention}
           onClick={insertMention}
         >
-          Р’СЃС‚Р°РІРёС‚СЊ СЃСЃС‹Р»РєСѓ
+          {INSERT_LINK_LABEL}
         </button>
       </div>
 
